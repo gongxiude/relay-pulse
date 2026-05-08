@@ -4,7 +4,7 @@
 如果你是人类开发者，请优先阅读 `README.md` 和 `CONTRIBUTING.md`，只在需要了解更多技术细节时再参考这里的内容。
 
 ### 同步检查点
-- **最后同步**: 2026-04-25（HEAD=a2436aa，模板模型升级 opus-4-7 / gpt-5.5 + anyrouter 1m beta + 变更申请快照回填 + admin 探测覆盖参数支持 SSRF 守卫）
+- **最后同步**: 2026-05-08（HEAD=8435c17，cc-haiku-arith-20260506 模板 anthropic-beta 同步 claude-cli/2.1.129 真抓包扩到 8 项；上一同步 9e19109 含 {{USER_ACCOUNT_UUID}}/{{RAND_UUID2}} 占位符 + admin 收录发布版块选择 hot/secondary/cold + verify cmd 修复 nil UserIDManager 导致 device_id 为空）
 - 代码是唯一真相源。本文档为架构与模式摘要，字段级细节请查阅引用的源文件。
 
 ## 项目概览
