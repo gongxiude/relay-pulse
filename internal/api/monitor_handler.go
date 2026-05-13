@@ -633,34 +633,54 @@ func (h *Handler) AdminGetMonitorLogs(c *gin.Context) {
 
 	modelFilter := strings.TrimSpace(c.Query("model"))
 
-	// 收集需要查询的 PSCM 组合。
-	// monitor file 中父通道 model 可能为空（聚合状态），子通道 model 必填。
+	// 提取 file 的父通道 PSC（PSC 三元组在 raw file 中是齐全的，只有子通道字段会为空）
+	var rootProvider, rootService, rootChannel string
+	for _, m := range file.Monitors {
+		if strings.TrimSpace(m.Parent) == "" {
+			rootProvider = m.Provider
+			rootService = m.Service
+			rootChannel = m.Channel
+			break
+		}
+	}
+
+	// PSCM 收集策略：
+	// 优先从运行时已解析配置（h.config.Monitors）取 —— Model 字段经过模板填充和父子继承，
+	// 与 DB 中 probe_history 表的 model 列字段级一致；
+	// 未命中时（罕见：刚 Create 还未热重载）fallback 到 raw file 字段。
 	type pscm struct {
 		provider, service, channel, model string
 	}
 	var keys []pscm
-	for _, m := range file.Monitors {
-		// 父通道：以 file 父通道 PSC 作为基准（同 monitor_handler 既有惯例）
-		provider := m.Provider
-		service := m.Service
-		channel := m.Channel
-		// 子通道由 parent 继承 PSC，但 monitor file 直接存储字段；优先用 m 自身字段，
-		// 空值（子通道未填）时回退到 file 父通道
-		if strings.TrimSpace(provider) == "" || strings.TrimSpace(service) == "" || strings.TrimSpace(channel) == "" {
-			for _, p := range file.Monitors {
-				if strings.TrimSpace(p.Parent) == "" {
-					provider = p.Provider
-					service = p.Service
-					channel = p.Channel
-					break
-				}
+
+	appCfg := h.snapshotAppConfig()
+	if appCfg != nil {
+		for _, m := range appCfg.Monitors {
+			if m.Provider != rootProvider || m.Service != rootService || m.Channel != rootChannel {
+				continue
 			}
+			if modelFilter != "" && m.Model != modelFilter {
+				continue
+			}
+			keys = append(keys, pscm{m.Provider, m.Service, m.Channel, m.Model})
 		}
-		model := m.Model
-		if modelFilter != "" && model != modelFilter {
-			continue
+	}
+
+	if len(keys) == 0 {
+		// fallback：运行时配置未命中（监测项可能刚创建未热重载）
+		for _, m := range file.Monitors {
+			provider := m.Provider
+			service := m.Service
+			channel := m.Channel
+			if strings.TrimSpace(provider) == "" || strings.TrimSpace(service) == "" || strings.TrimSpace(channel) == "" {
+				provider, service, channel = rootProvider, rootService, rootChannel
+			}
+			model := m.Model
+			if modelFilter != "" && model != modelFilter {
+				continue
+			}
+			keys = append(keys, pscm{provider, service, channel, model})
 		}
-		keys = append(keys, pscm{provider, service, channel, model})
 	}
 
 	if len(keys) == 0 {
