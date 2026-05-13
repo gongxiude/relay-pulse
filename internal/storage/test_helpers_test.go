@@ -20,6 +20,9 @@ func (panicStorage) GetLatest(string, string, string, string) (*ProbeRecord, err
 func (panicStorage) GetHistory(string, string, string, string, time.Time) ([]*ProbeRecord, error) {
 	panic("not implemented")
 }
+func (panicStorage) GetHistoryWithLimit(string, string, string, string, time.Time, int) ([]*ProbeRecord, error) {
+	panic("not implemented")
+}
 func (panicStorage) GetLatestBatch([]MonitorKey) (map[MonitorKey]*ProbeRecord, error) {
 	panic("not implemented")
 }

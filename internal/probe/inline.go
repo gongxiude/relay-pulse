@@ -270,3 +270,72 @@ func (p *InlineProber) Probe(ctx context.Context, serviceType, templateName, bas
 	}
 	return result
 }
+
+// ProbeConfig 使用已解析完成的 ServiceConfig 执行一次内联探测。
+//
+// 适用场景：调用方持有一份**已经过模板填充 + Duration 派生**的 ServiceConfig
+// （来自运行时 AppConfig.Monitors，或者经 config.ResolveSingleMonitor 处理过的
+// 临时配置），希望以"沙箱测试"语义复用 InlineProber 的执行内核。
+//
+// 与 Probe 方法的区别：
+//   - Probe(serviceType, templateName, baseURL, apiKey) 走 Builder.Build 从模板构造 cfg
+//   - ProbeConfig(cfg) 跳过 Builder，直接使用调用方传入的 cfg
+//
+// 因此本方法**不会**对 cfg 做任何模板解析、父子继承、env 注入或 Duration 派生 ——
+// 这些都是调用方的责任。返回值与 Probe 完全同构（携带 probe_id，可与日志/审计串联）。
+//
+// 仍保留的安全限制（继承自底层 internalProber + safe HTTP client）：
+//   - SSRF 守卫：私网/回环/链路本地 IP 阻断
+//   - 禁用代理：忽略 cfg.Proxy 与环境代理变量
+//   - 禁用自动重定向：3xx 直接归类为 redirect_blocked
+//   - 响应体读取上限：DefaultMaxResponseBytes (10 MB)
+//   - 并发上限：与 Probe 共享同一 semaphore
+func (p *InlineProber) ProbeConfig(ctx context.Context, cfg config.ServiceConfig) *Result {
+	result := &Result{
+		ProbeID:     "probe-" + uuid.New().String(),
+		ProbeStatus: 0,
+		SubStatus:   "none",
+	}
+
+	if err := ctx.Err(); err != nil {
+		result.SubStatus = "canceled"
+		result.ErrorMessage = err.Error()
+		return result
+	}
+
+	// 尝试获取信号量（满时立即拒绝，避免与定时调度抢资源）
+	select {
+	case p.sem <- struct{}{}:
+		defer func() { <-p.sem }()
+	default:
+		result.SubStatus = "concurrency_limited"
+		result.ErrorMessage = "探测并发已达上限，请稍后再试"
+		return result
+	}
+
+	// 探测期超时：优先使用 cfg.TimeoutDuration（已经过 ResolveSingleMonitor 派生），
+	// 兜底 15s；外层硬上限由调用方传入的 ctx 控制（通常 handler 套 30s）。
+	timeout := cfg.TimeoutDuration
+	if timeout <= 0 {
+		timeout = 15 * time.Second
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	pr := p.prober.probe(probeCtx, &cfg)
+	if pr == nil {
+		result.SubStatus = "internal_error"
+		result.ErrorMessage = "探测器返回空结果"
+		return result
+	}
+
+	result.ProbeStatus = pr.Status
+	result.SubStatus = pr.SubStatus
+	result.HTTPCode = pr.HTTPCode
+	result.Latency = pr.Latency
+	result.ResponseSnippet = pr.ResponseSnippet
+	if pr.Err != nil {
+		result.ErrorMessage = pr.Err.Error()
+	}
+	return result
+}

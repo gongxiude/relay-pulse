@@ -94,76 +94,93 @@ func (c *AppConfig) applyEnvOverrides() {
 	}
 }
 
-// ResolveTemplates 加载 template 字段引用的 JSON 模板文件，填充 ServiceConfig 中为空的字段
+// resolveTemplateForMonitor 加载单个 monitor 的 template 引用并填充 ServiceConfig 中为空的字段。
+//
+// 填充策略（config > template）：
+//   - Model / RequestModel / Method / Body / SuccessContains：monitor 已设值则保留
+//   - SlowLatency / Timeout / Retry* 系列字符串字段：同上
+//   - Headers：模板为基础，monitor 同名 key 覆盖（合并而非替换）
+//   - URLPattern：仅当为空时填充
+//
+// 返回的 error 不包含 monitor index 上下文；调用方（多条版本）负责包一层 "monitor[%d] ..." 前缀。
+func resolveTemplateForMonitor(m *ServiceConfig, configDir string) error {
+	if m == nil || m.Template == "" {
+		return nil
+	}
+
+	filePath := filepath.Join(configDir, "templates", m.Template+".json")
+	tmpl, err := LoadProbeTemplate(filePath)
+	if err != nil {
+		return err
+	}
+
+	// 模型元数据：config > template
+	if strings.TrimSpace(m.Model) == "" && tmpl.Model != "" {
+		m.Model = tmpl.Model
+	}
+	if strings.TrimSpace(m.RequestModel) == "" && tmpl.RequestModel != "" {
+		m.RequestModel = tmpl.RequestModel
+	}
+
+	// 仅填充为空的字段（config > template）
+	if m.Method == "" {
+		m.Method = tmpl.Method
+	}
+	if m.Body == "" && len(tmpl.BodyRaw) > 0 {
+		m.Body = string(tmpl.BodyRaw)
+	}
+	if m.SuccessContains == "" {
+		m.SuccessContains = tmpl.SuccessContains
+	}
+
+	// 模板默认探测参数（仅当 monitor 未显式配置时填充）
+	if strings.TrimSpace(m.SlowLatency) == "" && tmpl.SlowLatency != "" {
+		m.SlowLatency = tmpl.SlowLatency
+	}
+	if strings.TrimSpace(m.Timeout) == "" && tmpl.Timeout != "" {
+		m.Timeout = tmpl.Timeout
+	}
+	if m.Retry == nil && tmpl.Retry != nil {
+		v := *tmpl.Retry
+		m.Retry = &v
+	}
+	if strings.TrimSpace(m.RetryBaseDelay) == "" && tmpl.RetryBaseDelay != "" {
+		m.RetryBaseDelay = tmpl.RetryBaseDelay
+	}
+	if strings.TrimSpace(m.RetryMaxDelay) == "" && tmpl.RetryMaxDelay != "" {
+		m.RetryMaxDelay = tmpl.RetryMaxDelay
+	}
+	if m.RetryJitter == nil && tmpl.RetryJitter != nil {
+		v := *tmpl.RetryJitter
+		m.RetryJitter = &v
+	}
+
+	// Headers 合并策略：模板为基础，config 覆盖
+	if len(tmpl.Headers) > 0 {
+		merged := make(map[string]string, len(tmpl.Headers)+len(m.Headers))
+		for k, v := range tmpl.Headers {
+			merged[k] = v
+		}
+		for k, v := range m.Headers {
+			merged[k] = v // config 覆盖模板
+		}
+		m.Headers = merged
+	}
+
+	// URL 模式：模板的 url 字段存入 URLPattern，探测期通过 InjectVariables 替换
+	if m.URLPattern == "" && tmpl.URL != "" {
+		m.URLPattern = tmpl.URL
+	}
+
+	return nil
+}
+
+// ResolveTemplates 加载 template 字段引用的 JSON 模板文件，填充 ServiceConfig 中为空的字段。
 func (c *AppConfig) resolveTemplates(configDir string) error {
 	for i := range c.Monitors {
 		m := &c.Monitors[i]
-		if m.Template == "" {
-			continue
-		}
-
-		filePath := filepath.Join(configDir, "templates", m.Template+".json")
-		tmpl, err := LoadProbeTemplate(filePath)
-		if err != nil {
+		if err := resolveTemplateForMonitor(m, configDir); err != nil {
 			return fmt.Errorf("monitor[%d] provider=%s service=%s: %w", i, m.Provider, m.Service, err)
-		}
-
-		// 模型元数据：config > template
-		if strings.TrimSpace(m.Model) == "" && tmpl.Model != "" {
-			m.Model = tmpl.Model
-		}
-		if strings.TrimSpace(m.RequestModel) == "" && tmpl.RequestModel != "" {
-			m.RequestModel = tmpl.RequestModel
-		}
-
-		// 仅填充为空的字段（config > template）
-		if m.Method == "" {
-			m.Method = tmpl.Method
-		}
-		if m.Body == "" && len(tmpl.BodyRaw) > 0 {
-			m.Body = string(tmpl.BodyRaw)
-		}
-		if m.SuccessContains == "" {
-			m.SuccessContains = tmpl.SuccessContains
-		}
-
-		// 模板默认探测参数（仅当 monitor 未显式配置时填充）
-		if strings.TrimSpace(m.SlowLatency) == "" && tmpl.SlowLatency != "" {
-			m.SlowLatency = tmpl.SlowLatency
-		}
-		if strings.TrimSpace(m.Timeout) == "" && tmpl.Timeout != "" {
-			m.Timeout = tmpl.Timeout
-		}
-		if m.Retry == nil && tmpl.Retry != nil {
-			v := *tmpl.Retry
-			m.Retry = &v
-		}
-		if strings.TrimSpace(m.RetryBaseDelay) == "" && tmpl.RetryBaseDelay != "" {
-			m.RetryBaseDelay = tmpl.RetryBaseDelay
-		}
-		if strings.TrimSpace(m.RetryMaxDelay) == "" && tmpl.RetryMaxDelay != "" {
-			m.RetryMaxDelay = tmpl.RetryMaxDelay
-		}
-		if m.RetryJitter == nil && tmpl.RetryJitter != nil {
-			v := *tmpl.RetryJitter
-			m.RetryJitter = &v
-		}
-
-		// Headers 合并策略：模板为基础，config 覆盖
-		if len(tmpl.Headers) > 0 {
-			merged := make(map[string]string, len(tmpl.Headers)+len(m.Headers))
-			for k, v := range tmpl.Headers {
-				merged[k] = v
-			}
-			for k, v := range m.Headers {
-				merged[k] = v // config 覆盖模板
-			}
-			m.Headers = merged
-		}
-
-		// URL 模式：模板的 url 字段存入 URLPattern，探测期通过 InjectVariables 替换
-		if m.URLPattern == "" && tmpl.URL != "" {
-			m.URLPattern = tmpl.URL
 		}
 	}
 
@@ -172,6 +189,33 @@ func (c *AppConfig) resolveTemplates(configDir string) error {
 		return fmt.Errorf("模板解析后校验失败: %w", err)
 	}
 	return nil
+}
+
+// ResolveSingleMonitor 对单条 ServiceConfig 执行 = 模板填充 + Duration/Retry 派生。
+//
+// 适用场景：管理后台/用户自助测试构造的临时 ServiceConfig，需要与 scheduler 在用的
+// 配置走相同的解析路径，但不需要触发"多条联动"的全局校验。
+//
+// **不会**执行的步骤（这些是 loader 路径独有的）：
+//   - 父子继承（测试场景认为 cfg 已自包含；如需父子继承请走 loader）
+//   - 四元组唯一性校验（validateResolvedModelConstraints）
+//   - Provider 级 disabled/hidden 注入
+//   - provider_slug 默认值填充（属于 post-inheritance 步骤）
+//   - Annotation 解析
+//
+// **前置条件**：app 必须已经经过 normalize（IntervalDuration / TimeoutDuration 等全局默认值已派生），
+// 否则当 cfg 本身没指定 timeout 时将回退到 0。
+func ResolveSingleMonitor(app *AppConfig, cfg *ServiceConfig, configDir string) error {
+	if app == nil {
+		return fmt.Errorf("ResolveSingleMonitor: app config 不能为空")
+	}
+	if cfg == nil {
+		return fmt.Errorf("ResolveSingleMonitor: service config 不能为空")
+	}
+	if err := resolveTemplateForMonitor(cfg, configDir); err != nil {
+		return fmt.Errorf("template 解析失败: %w", err)
+	}
+	return normalizeDurationsForMonitor(app, cfg)
 }
 
 // Clone 深拷贝配置（用于热更新回滚）

@@ -214,6 +214,11 @@ type RecordStorage interface {
 	// GetHistory 获取历史记录（时间范围）
 	GetHistory(provider, service, channel, model string, since time.Time) ([]*ProbeRecord, error)
 
+	// GetHistoryWithLimit 获取指定 PSCM 在 since 之后的最近 limit 条记录，按 timestamp DESC + id DESC 返回。
+	// 与 GetHistory 不同，该方法返回值包含 ErrorDetail 字段，用于管理后台日志明细展示。
+	// limit <= 0 时回退到 200；上限 clamp 由上层 handler 负责。
+	GetHistoryWithLimit(provider, service, channel, model string, since time.Time, limit int) ([]*ProbeRecord, error)
+
 	// GetLatestBatch 批量获取每个监测项的最新记录
 	GetLatestBatch(keys []MonitorKey) (map[MonitorKey]*ProbeRecord, error)
 

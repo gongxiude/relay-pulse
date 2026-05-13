@@ -9,146 +9,185 @@ import (
 	"monitor/internal/logger"
 )
 
+// monitorPSCPrefix 构造形如 "monitor[i] (provider=..., service=..., channel=...)" 的错误前缀。
+// 当 index < 0 时省略 "[i]"（用于 ResolveSingleMonitor 等单条调用场景）。
+func monitorPSCPrefix(index int, cfg *ServiceConfig) string {
+	if index >= 0 {
+		return fmt.Sprintf("monitor[%d] (provider=%s, service=%s, channel=%s)",
+			index, cfg.Provider, cfg.Service, cfg.Channel)
+	}
+	return fmt.Sprintf("monitor (provider=%s, service=%s, channel=%s)",
+		cfg.Provider, cfg.Service, cfg.Channel)
+}
+
+// normalizeDurationsForMonitor 解析单条 ServiceConfig 的 Duration/Retry 派生字段。
+// 等价于 normalizeMonitorsPreInheritance 中针对单个 monitor 的 Duration 下发逻辑，但不依赖外层 index。
+//
+// 调用方：config.ResolveSingleMonitor（admin/onboarding 临时探测路径）。
+// loader 路径走 normalizeMonitorsPreInheritance 的 for 循环版本（带 index，错误前缀含 "monitor[i]"）。
+func normalizeDurationsForMonitor(app *AppConfig, cfg *ServiceConfig) error {
+	return normalizeDurationsForMonitorAt(app, cfg, -1)
+}
+
+// normalizeDurationsForMonitorAt 是 normalizeDurationsForMonitor 的带 index 版本，
+// 错误信息会带上 "monitor[i]" 前缀（兼容现有 loader 测试断言的错误格式）。
+//
+// 副作用：将 cfg 的 *Duration / RetryCount / RetryJitterValue 等派生字段重置后重新计算。
+// 这是为了兼容热更新场景（slice 元素复用，旧派生值可能残留）。
+func normalizeDurationsForMonitorAt(app *AppConfig, cfg *ServiceConfig, index int) error {
+	// 注意：以下 yaml:"-" 字段在热更新/复用 slice 元素的场景下，旧值可能残留。
+	// 每次 Normalize 都从零值开始重新计算，确保派生逻辑稳定。
+	cfg.SlowLatencyDuration = 0
+	cfg.TimeoutDuration = 0
+	cfg.IntervalDuration = 0
+	cfg.RetryCount = 0
+	cfg.RetryBaseDelayDuration = 0
+	cfg.RetryMaxDelayDuration = 0
+	cfg.RetryJitterValue = 0
+
+	prefix := monitorPSCPrefix(index, cfg)
+
+	// 解析 monitor 级 slow_latency（如有配置）
+	if trimmed := strings.TrimSpace(cfg.SlowLatency); trimmed != "" {
+		d, err := time.ParseDuration(trimmed)
+		if err != nil {
+			return fmt.Errorf("%s: 解析 slow_latency 失败: %w", prefix, err)
+		}
+		if d <= 0 {
+			return fmt.Errorf("%s: slow_latency 必须大于 0", prefix)
+		}
+		cfg.SlowLatencyDuration = d
+	}
+
+	// slow_latency 下发：monitor > global（模板值已在 resolveTemplates 填入 monitor）
+	if cfg.SlowLatencyDuration == 0 {
+		cfg.SlowLatencyDuration = app.SlowLatencyDuration
+	}
+
+	// 解析 monitor 级 timeout（如有配置）
+	if trimmed := strings.TrimSpace(cfg.Timeout); trimmed != "" {
+		d, err := time.ParseDuration(trimmed)
+		if err != nil {
+			return fmt.Errorf("%s: 解析 timeout 失败: %w", prefix, err)
+		}
+		if d <= 0 {
+			return fmt.Errorf("%s: timeout 必须大于 0", prefix)
+		}
+		cfg.TimeoutDuration = d
+	}
+
+	// timeout 下发：monitor > global（模板值已在 resolveTemplates 填入 monitor）
+	if cfg.TimeoutDuration == 0 {
+		cfg.TimeoutDuration = app.TimeoutDuration
+	}
+
+	// 警告：slow_latency >= timeout 时黄灯基本不会触发
+	if cfg.SlowLatencyDuration >= cfg.TimeoutDuration {
+		warnArgs := []any{
+			"provider", cfg.Provider,
+			"service", cfg.Service,
+			"channel", cfg.Channel,
+			"slow_latency", cfg.SlowLatencyDuration,
+			"timeout", cfg.TimeoutDuration,
+		}
+		if index >= 0 {
+			warnArgs = append([]any{"monitor_index", index}, warnArgs...)
+		}
+		logger.Warn("config", "slow_latency >= timeout，慢响应黄灯可能不会触发", warnArgs...)
+	}
+
+	// 解析单监测项的 interval，空值回退到全局
+	// 注意：interval 错误信息历史上只带 monitor[i] 前缀，不带 PSC（保持向后兼容）
+	if trimmed := strings.TrimSpace(cfg.Interval); trimmed != "" {
+		d, err := time.ParseDuration(trimmed)
+		if err != nil {
+			if index >= 0 {
+				return fmt.Errorf("monitor[%d]: 解析 interval 失败: %w", index, err)
+			}
+			return fmt.Errorf("monitor: 解析 interval 失败: %w", err)
+		}
+		if d <= 0 {
+			if index >= 0 {
+				return fmt.Errorf("monitor[%d]: interval 必须大于 0", index)
+			}
+			return fmt.Errorf("monitor: interval 必须大于 0")
+		}
+		cfg.IntervalDuration = d
+	} else {
+		cfg.IntervalDuration = app.IntervalDuration
+	}
+
+	// ===== 重试配置下发：monitor > global（模板值已在 resolveTemplates 填入 monitor） =====
+
+	// retry 下发
+	if cfg.Retry != nil {
+		if *cfg.Retry < 0 {
+			return fmt.Errorf("%s: retry 必须 >= 0", prefix)
+		}
+		cfg.RetryCount = *cfg.Retry
+	} else {
+		cfg.RetryCount = app.RetryCount
+	}
+
+	// retry_base_delay 下发
+	if trimmed := strings.TrimSpace(cfg.RetryBaseDelay); trimmed != "" {
+		d, err := time.ParseDuration(trimmed)
+		if err != nil {
+			return fmt.Errorf("%s: 解析 retry_base_delay 失败: %w", prefix, err)
+		}
+		if d <= 0 {
+			return fmt.Errorf("%s: retry_base_delay 必须 > 0", prefix)
+		}
+		cfg.RetryBaseDelayDuration = d
+	} else {
+		cfg.RetryBaseDelayDuration = app.RetryBaseDelayDuration
+	}
+
+	// retry_max_delay 下发
+	if trimmed := strings.TrimSpace(cfg.RetryMaxDelay); trimmed != "" {
+		d, err := time.ParseDuration(trimmed)
+		if err != nil {
+			return fmt.Errorf("%s: 解析 retry_max_delay 失败: %w", prefix, err)
+		}
+		if d <= 0 {
+			return fmt.Errorf("%s: retry_max_delay 必须 > 0", prefix)
+		}
+		cfg.RetryMaxDelayDuration = d
+	} else {
+		cfg.RetryMaxDelayDuration = app.RetryMaxDelayDuration
+	}
+
+	// retry_jitter 下发
+	if cfg.RetryJitter != nil {
+		v := *cfg.RetryJitter
+		if v < 0 || v > 1 {
+			return fmt.Errorf("%s: retry_jitter 必须在 0 到 1 之间", prefix)
+		}
+		cfg.RetryJitterValue = v
+	} else {
+		cfg.RetryJitterValue = app.RetryJitterValue
+	}
+
+	// 最终校验：max >= base
+	if cfg.RetryMaxDelayDuration < cfg.RetryBaseDelayDuration {
+		return fmt.Errorf("%s: retry_max_delay 必须 >= retry_base_delay", prefix)
+	}
+
+	return nil
+}
+
 // normalizeMonitorsPreInheritance 继承前的监测项规范化
 // 包括：派生字段重置、时间配置下发、重试配置下发、元数据规范化、Provider 状态注入
 // 注意：不包括 board 默认值填充和注解解析，这些需要在继承后处理
 func (c *AppConfig) normalizeMonitorsPreInheritance(ctx *normalizeContext) error {
 	for i := range c.Monitors {
-		// 注意：以下 yaml:"-" 字段在热更新/复用 slice 元素的场景下，旧值可能残留。
-		// 每次 Normalize 都从零值开始重新计算，确保派生逻辑稳定。
-		c.Monitors[i].SlowLatencyDuration = 0
-		c.Monitors[i].TimeoutDuration = 0
-		c.Monitors[i].IntervalDuration = 0
-		c.Monitors[i].RetryCount = 0
-		c.Monitors[i].RetryBaseDelayDuration = 0
-		c.Monitors[i].RetryMaxDelayDuration = 0
-		c.Monitors[i].RetryJitterValue = 0
-		c.Monitors[i].Annotations = nil // 由 annotation 解析逻辑重新计算（在 post-inheritance 阶段）
+		// Annotations 由 annotation 解析逻辑重新计算（在 post-inheritance 阶段）
+		c.Monitors[i].Annotations = nil
 
-		// 解析 monitor 级 slow_latency（如有配置）
-		if trimmed := strings.TrimSpace(c.Monitors[i].SlowLatency); trimmed != "" {
-			d, err := time.ParseDuration(trimmed)
-			if err != nil {
-				return fmt.Errorf("monitor[%d] (provider=%s, service=%s, channel=%s): 解析 slow_latency 失败: %w",
-					i, c.Monitors[i].Provider, c.Monitors[i].Service, c.Monitors[i].Channel, err)
-			}
-			if d <= 0 {
-				return fmt.Errorf("monitor[%d] (provider=%s, service=%s, channel=%s): slow_latency 必须大于 0",
-					i, c.Monitors[i].Provider, c.Monitors[i].Service, c.Monitors[i].Channel)
-			}
-			c.Monitors[i].SlowLatencyDuration = d
-		}
-
-		// slow_latency 下发：monitor > global（模板值已在 resolveTemplates 填入 monitor）
-		if c.Monitors[i].SlowLatencyDuration == 0 {
-			c.Monitors[i].SlowLatencyDuration = c.SlowLatencyDuration
-		}
-
-		// 解析 monitor 级 timeout（如有配置）
-		if trimmed := strings.TrimSpace(c.Monitors[i].Timeout); trimmed != "" {
-			d, err := time.ParseDuration(trimmed)
-			if err != nil {
-				return fmt.Errorf("monitor[%d] (provider=%s, service=%s, channel=%s): 解析 timeout 失败: %w",
-					i, c.Monitors[i].Provider, c.Monitors[i].Service, c.Monitors[i].Channel, err)
-			}
-			if d <= 0 {
-				return fmt.Errorf("monitor[%d] (provider=%s, service=%s, channel=%s): timeout 必须大于 0",
-					i, c.Monitors[i].Provider, c.Monitors[i].Service, c.Monitors[i].Channel)
-			}
-			c.Monitors[i].TimeoutDuration = d
-		}
-
-		// timeout 下发：monitor > global（模板值已在 resolveTemplates 填入 monitor）
-		if c.Monitors[i].TimeoutDuration == 0 {
-			c.Monitors[i].TimeoutDuration = c.TimeoutDuration
-		}
-
-		// 警告：slow_latency >= timeout 时黄灯基本不会触发
-		if c.Monitors[i].SlowLatencyDuration >= c.Monitors[i].TimeoutDuration {
-			logger.Warn("config", "slow_latency >= timeout，慢响应黄灯可能不会触发",
-				"monitor_index", i,
-				"provider", c.Monitors[i].Provider,
-				"service", c.Monitors[i].Service,
-				"channel", c.Monitors[i].Channel,
-				"slow_latency", c.Monitors[i].SlowLatencyDuration,
-				"timeout", c.Monitors[i].TimeoutDuration)
-		}
-
-		// 解析单监测项的 interval，空值回退到全局
-		if trimmed := strings.TrimSpace(c.Monitors[i].Interval); trimmed != "" {
-			d, err := time.ParseDuration(trimmed)
-			if err != nil {
-				return fmt.Errorf("monitor[%d]: 解析 interval 失败: %w", i, err)
-			}
-			if d <= 0 {
-				return fmt.Errorf("monitor[%d]: interval 必须大于 0", i)
-			}
-			c.Monitors[i].IntervalDuration = d
-		} else {
-			c.Monitors[i].IntervalDuration = c.IntervalDuration
-		}
-
-		// ===== 重试配置下发：monitor > global（模板值已在 resolveTemplates 填入 monitor） =====
-
-		// retry 下发
-		if c.Monitors[i].Retry != nil {
-			if *c.Monitors[i].Retry < 0 {
-				return fmt.Errorf("monitor[%d] (provider=%s, service=%s, channel=%s): retry 必须 >= 0",
-					i, c.Monitors[i].Provider, c.Monitors[i].Service, c.Monitors[i].Channel)
-			}
-			c.Monitors[i].RetryCount = *c.Monitors[i].Retry
-		} else {
-			c.Monitors[i].RetryCount = c.RetryCount
-		}
-
-		// retry_base_delay 下发
-		if trimmed := strings.TrimSpace(c.Monitors[i].RetryBaseDelay); trimmed != "" {
-			d, err := time.ParseDuration(trimmed)
-			if err != nil {
-				return fmt.Errorf("monitor[%d] (provider=%s, service=%s, channel=%s): 解析 retry_base_delay 失败: %w",
-					i, c.Monitors[i].Provider, c.Monitors[i].Service, c.Monitors[i].Channel, err)
-			}
-			if d <= 0 {
-				return fmt.Errorf("monitor[%d] (provider=%s, service=%s, channel=%s): retry_base_delay 必须 > 0",
-					i, c.Monitors[i].Provider, c.Monitors[i].Service, c.Monitors[i].Channel)
-			}
-			c.Monitors[i].RetryBaseDelayDuration = d
-		} else {
-			c.Monitors[i].RetryBaseDelayDuration = c.RetryBaseDelayDuration
-		}
-
-		// retry_max_delay 下发
-		if trimmed := strings.TrimSpace(c.Monitors[i].RetryMaxDelay); trimmed != "" {
-			d, err := time.ParseDuration(trimmed)
-			if err != nil {
-				return fmt.Errorf("monitor[%d] (provider=%s, service=%s, channel=%s): 解析 retry_max_delay 失败: %w",
-					i, c.Monitors[i].Provider, c.Monitors[i].Service, c.Monitors[i].Channel, err)
-			}
-			if d <= 0 {
-				return fmt.Errorf("monitor[%d] (provider=%s, service=%s, channel=%s): retry_max_delay 必须 > 0",
-					i, c.Monitors[i].Provider, c.Monitors[i].Service, c.Monitors[i].Channel)
-			}
-			c.Monitors[i].RetryMaxDelayDuration = d
-		} else {
-			c.Monitors[i].RetryMaxDelayDuration = c.RetryMaxDelayDuration
-		}
-
-		// retry_jitter 下发
-		if c.Monitors[i].RetryJitter != nil {
-			v := *c.Monitors[i].RetryJitter
-			if v < 0 || v > 1 {
-				return fmt.Errorf("monitor[%d] (provider=%s, service=%s, channel=%s): retry_jitter 必须在 0 到 1 之间",
-					i, c.Monitors[i].Provider, c.Monitors[i].Service, c.Monitors[i].Channel)
-			}
-			c.Monitors[i].RetryJitterValue = v
-		} else {
-			c.Monitors[i].RetryJitterValue = c.RetryJitterValue
-		}
-
-		// 最终校验：max >= base
-		if c.Monitors[i].RetryMaxDelayDuration < c.Monitors[i].RetryBaseDelayDuration {
-			return fmt.Errorf("monitor[%d] (provider=%s, service=%s, channel=%s): retry_max_delay 必须 >= retry_base_delay",
-				i, c.Monitors[i].Provider, c.Monitors[i].Service, c.Monitors[i].Channel)
+		// Duration/Retry 派生逻辑抽出到 normalizeDurationsForMonitorAt，
+		// 与 ResolveSingleMonitor 共享同一份代码路径。
+		if err := normalizeDurationsForMonitorAt(c, &c.Monitors[i], i); err != nil {
+			return err
 		}
 
 		// Board 和 ColdReason 仅做 trim，不填充默认值（留给 post-inheritance 处理）

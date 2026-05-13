@@ -716,6 +716,61 @@ func (s *SQLiteStorage) GetHistory(provider, service, channel, model string, sin
 	return records, nil
 }
 
+// GetHistoryWithLimit 获取指定 PSCM 在 since 之后的最近 limit 条记录，按 timestamp DESC + id DESC 返回。
+// 返回值保留时间倒序（最新在前），适合直接喂给管理后台日志面板；调用方需要升序时自行 reverseRecords。
+// 与 GetHistory 不同，此方法返回 ErrorDetail 字段。
+func (s *SQLiteStorage) GetHistoryWithLimit(provider, service, channel, model string, since time.Time, limit int) ([]*ProbeRecord, error) {
+	ctx := s.effectiveCtx()
+	if limit <= 0 {
+		limit = 200
+	}
+
+	// 复合排序键 (timestamp DESC, id DESC) 与 idx_probe_history_pscm_ts_cover 配合，
+	// 同一秒内多条记录按 id 倒序，保证分页结果稳定。
+	query := `
+		SELECT id, provider, service, channel, model, status, sub_status, http_code, latency, timestamp, error_detail
+		FROM probe_history
+		WHERE provider = ? AND service = ? AND channel = ? AND model = ? AND timestamp >= ?
+		ORDER BY timestamp DESC, id DESC
+		LIMIT ?
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, provider, service, channel, model, since.Unix(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("查询历史记录失败: %w", err)
+	}
+	defer rows.Close()
+
+	records := make([]*ProbeRecord, 0, limit)
+	for rows.Next() {
+		var record ProbeRecord
+		var subStatusStr string
+		if err := rows.Scan(
+			&record.ID,
+			&record.Provider,
+			&record.Service,
+			&record.Channel,
+			&record.Model,
+			&record.Status,
+			&subStatusStr,
+			&record.HttpCode,
+			&record.Latency,
+			&record.Timestamp,
+			&record.ErrorDetail,
+		); err != nil {
+			return nil, fmt.Errorf("扫描记录失败: %w", err)
+		}
+		record.SubStatus = SubStatus(subStatusStr)
+		records = append(records, &record)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("迭代记录失败: %w", err)
+	}
+
+	return records, nil
+}
+
 // ===== 状态订阅通知（事件）相关方法 =====
 
 // initEventTables 初始化事件相关表

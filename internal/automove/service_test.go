@@ -31,6 +31,9 @@ func (m *mockStorage) GetLatest(_, _, _, _ string) (*storage.ProbeRecord, error)
 func (m *mockStorage) GetHistory(_, _, _, _ string, _ time.Time) ([]*storage.ProbeRecord, error) {
 	return nil, nil
 }
+func (m *mockStorage) GetHistoryWithLimit(_, _, _, _ string, _ time.Time, _ int) ([]*storage.ProbeRecord, error) {
+	return nil, nil
+}
 func (m *mockStorage) GetLatestBatch(_ []storage.MonitorKey) (map[storage.MonitorKey]*storage.ProbeRecord, error) {
 	return nil, nil
 }

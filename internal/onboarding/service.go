@@ -455,8 +455,24 @@ func (s *Service) IssueProof(jobID, testType, apiURL, apiKey string) string {
 	return s.proofIssuer.Issue(jobID, testType, apiURL, fingerprint)
 }
 
-// buildServiceConfig 从 Submission 构建 ServiceConfig
-func (s *Service) buildServiceConfig(sub *Submission, apiKey string) config.ServiceConfig {
+// BuildServiceConfigFromSubmission 将 Submission（连同已解密的 apiKey）翻译成 ServiceConfig。
+//
+// 该函数是"用户提交字段" → "运行时监测配置"的官方映射点：
+//   - 发布到 monitors.d/ 时（AdminPublish）调用
+//   - 管理后台对申请做即时探测（AdminTestSubmission）时调用
+//   - 用户提交前自助探测（OnboardingTest）时调用（构造虚拟 Submission）
+//
+// 字段映射规则：
+//   - PSC 默认派生：provider=lower(ProviderName 去空格转-)，service=ServiceType，channel=ChannelCode
+//   - 管理员可在审核阶段通过 TargetProvider/TargetService/TargetChannel 覆盖 PSC（用于规范化命名）
+//
+// 注意：返回的 cfg 字段尚未经过模板填充和 Duration 派生；调用方如需用于内联探测，
+// 应再过一次 config.ResolveSingleMonitor。
+func BuildServiceConfigFromSubmission(sub *Submission, apiKey string) config.ServiceConfig {
+	if sub == nil {
+		return config.ServiceConfig{}
+	}
+
 	// 派生默认 PSC 标识
 	providerSlug := strings.ToLower(strings.ReplaceAll(sub.ProviderName, " ", "-"))
 	serviceType := sub.ServiceType
@@ -497,6 +513,12 @@ func (s *Service) buildServiceConfig(sub *Submission, apiKey string) config.Serv
 		cfg.PriceMax = &v
 	}
 	return cfg
+}
+
+// buildServiceConfig 是 BuildServiceConfigFromSubmission 的 method 包装，
+// 保留以兼容 Service 内部既有调用方（AdminPublish 等）。
+func (s *Service) buildServiceConfig(sub *Submission, apiKey string) config.ServiceConfig {
+	return BuildServiceConfigFromSubmission(sub, apiKey)
 }
 
 // hashIP 计算 IP 地址的 SHA256 哈希
