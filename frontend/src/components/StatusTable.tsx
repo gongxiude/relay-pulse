@@ -204,11 +204,20 @@ function QualityScoreCell({ score, compact = false }: { score?: RpdiagScore; com
   const ranked = [...score.models].sort(compareModelKeys);
   const title = ranked.map(formatModelTooltipRow).join('\n');
 
-  const W = compact ? 36 : 90;
-  const H = compact ? 14 : 18;
+  const W = compact ? 36 : 44;
+  const H = compact ? 14 : 36;
   const STEP = W / 3;
   // 1.2px 内边距上下避免点贴边
   const PAD = 1.2;
+  // 圆点半径/线粗随 H 等比放大，desktop H=36 时圆点更醒目
+  const DOT_R = compact ? 1.4 : 2.4;
+  const STROKE_W = compact ? 1.2 : 1.6;
+  // Y 轴参考线：80 / 100 两档，让点的高度有"刻度感"。score=80 对应 norm 0.4、
+  // score=100 对应 norm 1.0；与 polyline/dot 共用 qualityScoreYNorm 保证一致。
+  const referenceLines = [80, 100].map((markerScore) => ({
+    score: markerScore,
+    y: H - PAD - qualityScoreYNorm(markerScore) * (H - 2 * PAD),
+  }));
 
   // Y 轴分段非线性：高分段占 SVG 顶部 60% 像素，让 95 vs 100 等小差异有视觉空间。
   //   score 0-60   → SVG 底部 20%
@@ -248,6 +257,18 @@ function QualityScoreCell({ score, compact = false }: { score?: RpdiagScore; com
         aria-hidden="true"
         className="flex-shrink-0"
       >
+        {referenceLines.map((line) => (
+          <line
+            key={line.score}
+            x1="0"
+            y1={line.y}
+            x2={W}
+            y2={line.y}
+            stroke="hsl(0 0% 55% / 0.35)"
+            strokeWidth="0.5"
+            strokeDasharray="1 2"
+          />
+        ))}
         {series.map((s, i) => (
           <g key={i}>
             {s.points.length > 1 && (
@@ -255,14 +276,14 @@ function QualityScoreCell({ score, compact = false }: { score?: RpdiagScore; com
                 points={s.points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')}
                 fill="none"
                 stroke={s.color}
-                strokeWidth="1.2"
+                strokeWidth={STROKE_W}
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 opacity="0.85"
               />
             )}
             {s.points.map((p, j) => (
-              <circle key={j} cx={p.x} cy={p.y} r="1.4" fill={qualityScoreColor(p.value)} />
+              <circle key={j} cx={p.x} cy={p.y} r={DOT_R} fill={qualityScoreColor(p.value)} />
             ))}
           </g>
         ))}
