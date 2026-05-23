@@ -387,7 +387,7 @@ function MobileRow({ index, style, data, slowLatencyMs, enableAnnotations, showP
           onToggleFavorite={() => onToggleFavorite(item.id)}
           onBlockHover={onBlockHover}
           onBlockLeave={onBlockLeave}
-          rpdiagScore={lookupRpdiagScore(rpdiagScores, item.providerId, item.serviceType, item.channel)}
+          rpdiagScore={lookupRpdiagScore(rpdiagScores, item.providerId, item.serviceType, item.channelName || item.channel)}
         />
       </div>
     </div>
@@ -1027,7 +1027,7 @@ function StatusTableComponent({
                 </div>
               </td>
               <td className="px-2 py-1 whitespace-nowrap">
-                <QualityScoreCell score={lookupRpdiagScore(rpdiagScores, item.providerId, item.serviceType, item.channel)} />
+                <QualityScoreCell score={lookupRpdiagScore(rpdiagScores, item.providerId, item.serviceType, item.channelName || item.channel)} />
               </td>
               <td className="pl-2 pr-4 py-1.5 align-middle">
                 <div className="flex items-center gap-[2px] h-5 w-full overflow-hidden rounded-sm">
