@@ -663,6 +663,15 @@ export function MonitorDetail({
           </div>
         )}
       </div>
+
+      {probeResult && !templateDirty && probeResult.responseSnippet && (
+        <div className="space-y-1">
+          <div className="text-xs text-muted">{t('admin.monitors.probeResponseBody')}</div>
+          <pre className="whitespace-pre-wrap break-all text-xs max-h-40 overflow-y-auto bg-surface p-2 rounded text-secondary">
+            {probeResult.responseSnippet}
+          </pre>
+        </div>
+      )}
       </>
       )}
     </div>
