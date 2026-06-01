@@ -186,12 +186,58 @@ describe('apiClient', () => {
       expect(extractErrorMessage('{"error":"旧版错误"}', 'fallback')).toBe('旧版错误');
     });
 
-    it('非 JSON 时回退到原始文本', () => {
+    it('简短非 JSON 文本时回退到原始文本', () => {
       expect(extractErrorMessage('gateway timeout', 'fallback')).toBe('gateway timeout');
+    });
+
+    it('HTML 网关错误页不暴露原始 body，回退到 fallback', () => {
+      const html = '<!DOCTYPE html><html><head><title>502 Bad gateway</title></head><body>...</body></html>';
+      expect(extractErrorMessage(html, 'fallback')).toBe('fallback');
+    });
+
+    it('超长非 JSON body 回退到 fallback', () => {
+      expect(extractErrorMessage('x'.repeat(500), 'fallback')).toBe('fallback');
     });
 
     it('空文本时使用 fallback', () => {
       expect(extractErrorMessage('', 'fallback')).toBe('fallback');
+    });
+  });
+
+  describe('网关瞬断重试', () => {
+    it('GET 遇 502 静默重试一次并在恢复后成功', async () => {
+      fetchMock
+        .mockResolvedValueOnce(new Response('<html>502 Bad gateway</html>', { status: 502 }))
+        .mockResolvedValueOnce(jsonResponse({ ok: true }, { status: 200 }));
+      const result = await apiGet<{ ok: boolean }>('/api/admin/monitors');
+      expect(result).toEqual({ ok: true });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('GET 持续 502 时重试耗尽，抛出干净的状态文案（不含 HTML）', async () => {
+      // 每次调用返回全新 Response（真实 fetch 行为；body 只能读一次）
+      fetchMock.mockImplementation(() => new Response('<html>502 Bad gateway</html>', { status: 502 }));
+      await expect(apiGet('/api/admin/monitors')).rejects.toMatchObject({
+        name: 'ApiError',
+        status: 502,
+        message: '服务暂时不可用（502），请稍后重试',
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('POST（非幂等）遇 502 不重试', async () => {
+      fetchMock.mockResolvedValue(new Response('<html>502</html>', { status: 502 }));
+      await expect(apiPost('/api/admin/monitors', {})).rejects.toMatchObject({
+        status: 502,
+        message: '服务暂时不可用（502），请稍后重试',
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('GET 遇 500（应用错误）不重试', async () => {
+      fetchMock.mockResolvedValue(jsonResponse({ error: '内部错误' }, { status: 500 }));
+      await expect(apiGet('/api/status')).rejects.toMatchObject({ status: 500 });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
   });
 
