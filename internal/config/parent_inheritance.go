@@ -81,13 +81,20 @@ func inheritCoreBehavior(child, parent *ServiceConfig) {
 	if child.Method == "" {
 		child.Method = parent.Method
 	}
+	inheritedBody := false
 	if child.Body == "" {
 		child.Body = parent.Body
+		inheritedBody = true
 	}
 	if child.RequestModel == "" {
 		child.RequestModel = parent.RequestModel
 	}
-	if child.SuccessContains == "" {
+	// SuccessContains 是「当前 Body 应如何判成功」的语义条件，必须与 Body 同源
+	// （同一份请求定义「发什么」与「期望什么」）。仅当 Body 也继承自父项时，才继承
+	// 父项的 SuccessContains；若子项已有自己的 Body（来自不同模板或手写），其空
+	// SuccessContains 表示「只按 HTTP 200 判活、不校验内容」，不能被父项的校验关键字
+	// 污染（否则会出现「发 ping、却用父项算术答案校验」的永久 content_mismatch）。
+	if inheritedBody && child.SuccessContains == "" {
 		child.SuccessContains = parent.SuccessContains
 	}
 	if child.UserIDRefreshMinutes == 0 {

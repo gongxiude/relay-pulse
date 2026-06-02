@@ -850,3 +850,100 @@ func TestChildInheritsTemplateFromParent(t *testing.T) {
 		t.Fatalf("child.Template = %q, want %q", child.Template, "cc_base.json")
 	}
 }
+
+// TestChildOwnBodyDoesNotInheritParentSuccessContains 复现并锁定线上 bug：
+// 子项有自己的 Body（如来自 cc-opus-ping 模板，body 发 "ping"）且 SuccessContains 为空时，
+// 不应继承父项（cc-opus-arith）的算术校验串 {{EXPECTED_ANSWER}}。
+// 否则会出现「探针发 ping、却用父项算术答案校验」的永久 content_mismatch。
+func TestChildOwnBodyDoesNotInheritParentSuccessContains(t *testing.T) {
+	cfg := &AppConfig{
+		Monitors: []ServiceConfig{
+			{
+				Provider:        "demo",
+				Service:         "cc",
+				Channel:         "vip",
+				Model:           "Opus",
+				BaseURL:         "https://example.com",
+				URLPattern:      "{{BASE_URL}}",
+				Method:          "POST",
+				Category:        "public",
+				APIKey:          "k",
+				Body:            `{"messages":[{"role":"user","content":"Calculate: {{PROMPT}}"}]}`,
+				SuccessContains: "{{EXPECTED_ANSWER}}",
+			},
+			{
+				// 子项有自己的 body（ping）+ 空 success_contains（= 仅判 HTTP 活性）
+				Provider:        "demo",
+				Service:         "cc",
+				Channel:         "vip",
+				Model:           "Opus-Ping",
+				Parent:          "demo/cc/vip",
+				Category:        "public",
+				Body:            `{"messages":[{"role":"user","content":"ping"}]}`,
+				SuccessContains: "",
+			},
+		},
+	}
+
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("Validate() failed: %v", err)
+	}
+	if err := cfg.normalize(); err != nil {
+		t.Fatalf("Normalize() failed: %v", err)
+	}
+
+	child := &cfg.Monitors[1]
+	if child.Body != `{"messages":[{"role":"user","content":"ping"}]}` {
+		t.Fatalf("child.Body 被改写 = %q，应保持自己的 ping body", child.Body)
+	}
+	if child.SuccessContains != "" {
+		t.Fatalf("child.SuccessContains = %q，应保持空（不继承父项校验串）", child.SuccessContains)
+	}
+}
+
+// TestChildExplicitSuccessContainsNotOverwritten 验证子项继承 body 但显式设置了
+// 自己的 success_contains 时，不被父项覆盖。
+func TestChildExplicitSuccessContainsNotOverwritten(t *testing.T) {
+	cfg := &AppConfig{
+		Monitors: []ServiceConfig{
+			{
+				Provider:        "demo",
+				Service:         "cc",
+				Channel:         "vip",
+				Model:           "base",
+				BaseURL:         "https://example.com",
+				URLPattern:      "{{BASE_URL}}",
+				Method:          "POST",
+				Category:        "public",
+				APIKey:          "k",
+				Body:            `{"model":"{{MODEL}}"}`,
+				SuccessContains: "parent-keyword",
+			},
+			{
+				Provider: "demo",
+				Service:  "cc",
+				Channel:  "vip",
+				Model:    "child",
+				Parent:   "demo/cc/vip",
+				Category: "public",
+				// Body 留空：继承父 body
+				SuccessContains: "child-keyword",
+			},
+		},
+	}
+
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("Validate() failed: %v", err)
+	}
+	if err := cfg.normalize(); err != nil {
+		t.Fatalf("Normalize() failed: %v", err)
+	}
+
+	child := &cfg.Monitors[1]
+	if child.Body != `{"model":"{{MODEL}}"}` {
+		t.Fatalf("child.Body = %q, want inherited body", child.Body)
+	}
+	if child.SuccessContains != "child-keyword" {
+		t.Fatalf("child.SuccessContains = %q, want %q（显式值不应被覆盖）", child.SuccessContains, "child-keyword")
+	}
+}
