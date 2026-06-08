@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
-import { ArrowLeft, ArrowRight, Check, Loader2, Key, AlertCircle, Copy, Activity } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Loader2, Key, AlertCircle, Copy, Activity, Search } from 'lucide-react';
 import { LANGUAGE_PATH_MAP, type SupportedLanguage } from '../i18n';
 import { useChangeRequest, type ChangeStep } from '../hooks/useChangeRequest';
 import type { AuthCandidate } from '../types/change';
@@ -157,12 +157,11 @@ function EditStep({
 
   if (!selectedCandidate) return null;
 
+  // 类别（category）与赞助等级（sponsor_level）的调整须经 QQ 人工对接，不在自助变更范围内（见 sponsorship.md §2.2），故此处不开放编辑
   const fields = [
     { key: 'provider_name', label: t('changeRequest.fields.providerName'), current: selectedCandidate.provider_name },
     { key: 'provider_url', label: t('changeRequest.fields.providerUrl'), current: selectedCandidate.provider_url },
     { key: 'channel_name', label: t('changeRequest.fields.channelName'), current: selectedCandidate.channel_name },
-    { key: 'category', label: t('changeRequest.fields.category'), current: selectedCandidate.category, type: 'select', options: ['commercial', 'public'] },
-    { key: 'sponsor_level', label: t('changeRequest.fields.sponsorLevel'), current: selectedCandidate.sponsor_level, type: 'select', options: ['pulse'] },
     { key: 'base_url', label: t('changeRequest.fields.baseUrl'), current: selectedCandidate.base_url },
   ];
 
@@ -180,26 +179,13 @@ function EditStep({
               {f.label}
               <span className="text-muted ml-2 font-normal">({t('changeRequest.edit.current')}: {f.current || '—'})</span>
             </label>
-            {f.type === 'select' ? (
-              <select
-                value={changes[f.key] ?? ''}
-                onChange={e => updateChange(f.key, e.target.value)}
-                className="w-full px-3 py-2.5 rounded-xl bg-elevated border border-default text-primary focus:border-accent/50 focus:outline-none transition"
-              >
-                <option value="">{t('changeRequest.edit.noChange')}</option>
-                {f.options?.map(opt => (
-                  <option key={opt} value={opt}>{opt}</option>
-                ))}
-              </select>
-            ) : (
-              <input
-                type="text"
-                value={changes[f.key] ?? ''}
-                onChange={e => updateChange(f.key, e.target.value)}
-                placeholder={t('changeRequest.edit.noChange')}
-                className="w-full px-3 py-2.5 rounded-xl bg-elevated border border-default text-primary placeholder:text-muted focus:border-accent/50 focus:outline-none transition"
-              />
-            )}
+            <input
+              type="text"
+              value={changes[f.key] ?? ''}
+              onChange={e => updateChange(f.key, e.target.value)}
+              placeholder={t('changeRequest.edit.noChange')}
+              className="w-full px-3 py-2.5 rounded-xl bg-elevated border border-default text-primary placeholder:text-muted focus:border-accent/50 focus:outline-none transition"
+            />
           </div>
         ))}
 
@@ -387,6 +373,14 @@ function ReviewStep({
 }) {
   const { t } = useTranslation();
 
+  // 改动字段的展示标签：与编辑页保持一致，避免在复核页暴露 snake_case 原始键名
+  const fieldLabels: Record<string, string> = {
+    provider_name: t('changeRequest.fields.providerName'),
+    provider_url: t('changeRequest.fields.providerUrl'),
+    channel_name: t('changeRequest.fields.channelName'),
+    base_url: t('changeRequest.fields.baseUrl'),
+  };
+
   return (
     <div className="max-w-lg mx-auto">
       <h2 className="text-xl font-semibold text-primary mb-2">{t('changeRequest.review.title')}</h2>
@@ -402,7 +396,7 @@ function ReviewStep({
         {Object.entries(changes).map(([field, value]) => (
           <div key={field} className="flex items-center gap-3 p-3 rounded-lg bg-elevated border border-default">
             <div className="flex-1">
-              <div className="text-xs text-muted">{field}</div>
+              <div className="text-xs text-muted">{fieldLabels[field] ?? field}</div>
               <div className="text-sm text-secondary line-through">
                 {(selectedCandidate as unknown as Record<string, string>)[field] || '—'}
               </div>
@@ -413,7 +407,7 @@ function ReviewStep({
 
         {newApiKey && (
           <div className="p-3 rounded-lg bg-elevated border border-default">
-            <div className="text-xs text-muted">new_api_key</div>
+            <div className="text-xs text-muted">{t('changeRequest.fields.newApiKey')}</div>
             <div className="text-sm text-secondary line-through">...{selectedCandidate.key_last4}</div>
             <div className="text-sm text-primary font-medium">...{newApiKey.slice(-4)}</div>
           </div>
@@ -445,7 +439,7 @@ function ReviewStep({
 }
 
 /** Done 步骤 */
-function DoneStep({ publicId, reset }: { publicId: string; reset: () => void }) {
+function DoneStep({ publicId, reset, onViewStatus }: { publicId: string; reset: () => void; onViewStatus: () => void }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
 
@@ -471,12 +465,21 @@ function DoneStep({ publicId, reset }: { publicId: string; reset: () => void }) 
         {copied && <span className="text-xs text-success">✓</span>}
       </div>
 
-      <button
-        onClick={reset}
-        className="px-6 py-2.5 rounded-xl border border-default text-secondary hover:text-primary transition"
-      >
-        {t('changeRequest.done.newRequest')}
-      </button>
+      <div className="flex flex-wrap justify-center gap-3">
+        <button
+          onClick={onViewStatus}
+          className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-accent text-white font-medium hover:bg-accent-strong transition"
+        >
+          <Search className="w-4 h-4" />
+          {t('statusQuery.viewProgress')}
+        </button>
+        <button
+          onClick={reset}
+          className="px-6 py-2.5 rounded-xl border border-default text-secondary hover:text-primary transition"
+        >
+          {t('changeRequest.done.newRequest')}
+        </button>
+      </div>
     </div>
   );
 }
@@ -487,6 +490,7 @@ export default function ChangeRequestPage() {
   const cr = useChangeRequest();
   const langPrefix = LANGUAGE_PATH_MAP[i18n.language as SupportedLanguage];
   const homePath = langPrefix ? `/${langPrefix}` : '/';
+  const buildPath = (path: string) => (langPrefix ? `/${langPrefix}${path}` : path);
 
   return (
     <>
@@ -575,7 +579,11 @@ export default function ChangeRequestPage() {
           )}
 
           {cr.step === 'done' && (
-            <DoneStep publicId={cr.publicId} reset={cr.reset} />
+            <DoneStep
+              publicId={cr.publicId}
+              reset={cr.reset}
+              onViewStatus={() => navigate(`${buildPath('/contact/status')}?id=${encodeURIComponent(cr.publicId)}`)}
+            />
           )}
         </main>
       </div>

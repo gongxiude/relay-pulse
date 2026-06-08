@@ -96,13 +96,14 @@ export interface AdminChangeRequest {
   updated_at: number;
 }
 
-/** 允许用户变更的字段集合（API Key 轮换使用顶层 new_api_key 字段，不走 proposed_changes） */
+/**
+ * 允许用户自助变更的字段集合（API Key 轮换使用顶层 new_api_key 字段，不走 proposed_changes）。
+ * 注意：类别（category）与赞助等级（sponsor_level）须经 QQ 人工对接，不属于自助变更范围（见 sponsorship.md §2.2）。
+ */
 export const EDITABLE_FIELDS = [
   'provider_name',
   'provider_url',
   'channel_name',
-  'category',
-  'sponsor_level',
   'base_url',
 ] as const;
 
