@@ -47,6 +47,26 @@ func TestValidateChannelTypeSource(t *testing.T) {
 	}
 }
 
+// TestCatalogCategoriesAllReachable 守护「类型↔来源」映射与词表不漂移：
+// ChannelSourceCatalog 里每个来源的 Category 必须落在某个 channelType 的允许集合中，
+// 否则该来源永远无法被任何类型选中（死项）。新增来源 category 写错时此测试即报警。
+func TestCatalogCategoriesAllReachable(t *testing.T) {
+	reachable := make(map[string]bool)
+	for _, cats := range channelTypeAllowedCategories {
+		for _, c := range cats {
+			reachable[c] = true
+		}
+	}
+	for service, opts := range ChannelSourceCatalog {
+		for _, opt := range opts {
+			if !reachable[opt.Category] {
+				t.Errorf("service=%q 来源 %q 的 category=%q 不在任何 channelType 允许集合中（死项）；"+
+					"请检查 channelTypeAllowedCategories 或该来源的 Category", service, opt.Value, opt.Category)
+			}
+		}
+	}
+}
+
 // TestSubmit_RejectsUnacceptedAgreement 验证未确认协议的提交在前置环节即被拒，
 // 早于 provider/来源校验与 IP 限流 / proof 校验，不消耗配额也不暴露后续字段细节。
 func TestSubmit_RejectsUnacceptedAgreement(t *testing.T) {
