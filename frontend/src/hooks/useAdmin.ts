@@ -9,6 +9,7 @@ import type {
 } from '../types/onboarding';
 
 const TOKEN_KEY = 'relay-pulse-admin-token';
+const SEARCH_DEBOUNCE_MS = 300;
 
 export function useAdmin() {
   const [token, setTokenState] = useState<string>(() => {
@@ -22,6 +23,9 @@ export function useAdmin() {
   const [statusFilter, setStatusFilter] = useState<SubmissionStatus | 'all'>('all');
   const [page, setPage] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
+  // searchQuery 跟随输入即时更新（供受控输入框回显），debouncedSearchQuery 才驱动请求。
+  const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
 
   // Detail state
   const [selectedSubmission, setSelectedSubmission] = useState<AdminSubmission | null>(null);
@@ -47,6 +51,17 @@ export function useAdmin() {
     setIsAuthenticated(false);
   }, []);
 
+  // 输入做 debounce：稳定 300ms 后才更新驱动请求的值，并同时回到第 1 页。
+  // 把 setPage(1) 放在这里（而非输入回调里）可避免「翻到第 N 页后开始搜索」时
+  // 先打一次「旧关键词 + 第 1 页」的多余请求，从而消除潜在的旧响应覆盖新响应。
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery.trim());
+      setPage(1);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
   // Fetch list
   const fetchList = useCallback(async () => {
     if (!token) return;
@@ -55,8 +70,14 @@ export function useAdmin() {
 
     try {
       const limit = 20;
+      const params = new URLSearchParams({
+        status: statusFilter,
+        limit: String(limit),
+        offset: String((page - 1) * limit),
+      });
+      if (debouncedSearchQuery) params.set('q', debouncedSearchQuery);
       const resp = await apiGet<AdminListResponse>(
-        `/api/admin/submissions?status=${statusFilter}&limit=${limit}&offset=${(page - 1) * limit}`,
+        `/api/admin/submissions?${params.toString()}`,
         { headers: authHeaders() },
       );
       setSubmissions(resp.submissions || []);
@@ -71,7 +92,7 @@ export function useAdmin() {
     } finally {
       setIsLoading(false);
     }
-  }, [token, statusFilter, page, authHeaders]);
+  }, [token, statusFilter, page, debouncedSearchQuery, authHeaders]);
 
   // Auto-fetch on filter/page change
   useEffect(() => {
@@ -213,6 +234,8 @@ export function useAdmin() {
     page,
     setPage,
     isLoading,
+    searchQuery,
+    setSearchQuery,
     fetchList,
 
     // Detail

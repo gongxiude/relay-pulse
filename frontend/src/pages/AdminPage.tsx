@@ -22,7 +22,7 @@ export default function AdminPage() {
   const {
     token, isAuthenticated, setToken, logout,
     submissions, total, statusFilter, setStatusFilter,
-    page, setPage, isLoading,
+    page, setPage, isLoading, searchQuery, setSearchQuery,
     selectedSubmission, selectedApiKey, showApiKey, setShowApiKey,
     fetchDetail, fetchTemplates, updateSubmission, testSubmission, rejectSubmission, deleteSubmission, publishSubmission,
     setSelectedSubmission,
@@ -121,6 +121,8 @@ export default function AdminPage() {
                     setStatusFilter={setStatusFilter}
                     page={page}
                     setPage={setPage}
+                    searchQuery={searchQuery}
+                    setSearchQuery={setSearchQuery}
                     onSelect={(sub) => fetchDetail(sub.public_id)}
                     isLoading={isLoading}
                   />

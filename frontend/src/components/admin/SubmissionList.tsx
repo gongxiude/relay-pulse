@@ -13,6 +13,8 @@ interface SubmissionListProps {
   setStatusFilter: (filter: StatusFilter) => void;
   page: number;
   setPage: (page: number) => void;
+  searchQuery: string;
+  setSearchQuery: (query: string) => void;
   onSelect: (submission: AdminSubmission) => void;
   isLoading: boolean;
 }
@@ -59,6 +61,8 @@ export const SubmissionList: React.FC<SubmissionListProps> = ({
   setStatusFilter,
   page,
   setPage,
+  searchQuery,
+  setSearchQuery,
   onSelect,
   isLoading,
 }) => {
@@ -67,6 +71,16 @@ export const SubmissionList: React.FC<SubmissionListProps> = ({
 
   return (
     <div className="space-y-4">
+      {/* Search by public_id */}
+      <input
+        type="text"
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
+        placeholder={t('admin.submissions.searchPlaceholder')}
+        className="w-full px-3 py-2 rounded-lg bg-surface border border-default text-sm text-primary
+                   placeholder:text-muted focus:outline-none focus:border-accent transition-colors"
+      />
+
       {/* Status filter tabs */}
       <div className="flex gap-1 bg-elevated rounded-lg p-1">
         {STATUS_FILTERS.map((filter) => (
@@ -137,7 +151,7 @@ export const SubmissionList: React.FC<SubmissionListProps> = ({
                     className="border-b border-default last:border-b-0
                                hover:bg-elevated cursor-pointer transition-colors"
                   >
-                    <td className="px-4 py-3 text-muted font-mono text-xs">
+                    <td className="px-4 py-3 text-muted font-mono text-xs" title={sub.public_id}>
                       {truncateId(sub.public_id)}
                     </td>
                     <td className="px-4 py-3 text-primary font-medium">
