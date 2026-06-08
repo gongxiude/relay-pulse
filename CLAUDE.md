@@ -4,7 +4,7 @@
 如果你是人类开发者，请优先阅读 `README.md` 和 `CONTRIBUTING.md`，只在需要了解更多技术细节时再参考这里的内容。
 
 ### 同步检查点
-- **最后同步**: 2026-05-13（HEAD=c626642，探测链路统一：InlineProber.ProbeConfig + config.ResolveSingleMonitor + onboarding.BuildServiceConfigFromSubmission 三个 helper 让 onboarding/test、admin/submissions/:id/test、admin/monitors/:key/probe 三处与 scheduler 走字段级一致的 ServiceConfig；新增 GET /api/admin/monitors/:key/logs；InlineProber 每次探测打 probe_id 结构化日志；前端 MonitorDetail 加详情/探测历史 tabs；上一同步 8435c17 cc-haiku-arith-20260506 模板 anthropic-beta 同步 claude-cli/2.1.129 真抓包扩到 8 项）
+- **最后同步**: 2026-06-08（HEAD=9775104，自助收录通道标识改三段 `{type}-{source}-{group}`：新增 `deriveChannelCode(channelType, channelSource, channelGroup)` + 单一真相源 `ChannelSourceCatalog`（per-service 受控词表，同时供 /api/onboarding/meta 下发）+ provider_name 限 ASCII + store 新增 `channel_group` 列；AdminUpdate 仅四元组变化才重派生；新增查询进度页 /contact/status 与 admin 申请列表按编号搜索；变更申请收敛可改字段。已部署生产。上一同步 c626642 探测链路统一：InlineProber.ProbeConfig + config.ResolveSingleMonitor + onboarding.BuildServiceConfigFromSubmission 三个 helper 让三处 inline 测试与 scheduler 字段级一致 + GET /api/admin/monitors/:key/logs）
 - 代码是唯一真相源。本文档为架构与模式摘要，字段级细节请查阅引用的源文件。
 
 ## 项目概览
