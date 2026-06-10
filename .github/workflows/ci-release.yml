@@ -3,6 +3,8 @@ name: CI & Release
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -27,7 +29,10 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: 'go.mod'
+          # 跟随最新 1.25.x（与生产 Dockerfile golang:1.25-alpine 一致），
+          # 确保 govulncheck 跑在含安全补丁的工具链上（go.mod 的 1.25.0 可能
+          # 让 setup-go 装精确 1.25.0，落后于已修复 CVE 的 1.25.11）。
+          go-version: '1.25'
           cache: true
 
       - name: Set up Node.js
@@ -95,6 +100,13 @@ jobs:
       - name: Frontend test
         working-directory: frontend
         run: npm run test -- --run
+
+      # 依赖/标准库漏洞闸：跑在 1.25.x（生产等价）工具链上，防安全回归。
+      # 不放进本地 Makefile——开发机若用更新的 Go 小版本会误报与生产无关的告警。
+      - name: Vulnerability scan (govulncheck)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
 
       - name: Test Summary
         run: |
