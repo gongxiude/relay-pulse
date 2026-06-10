@@ -32,7 +32,7 @@
 
 ### 技术栈
 
-- **后端**: Go 1.24+ (Gin, fsnotify, SQLite/PostgreSQL, slog)
+- **后端**: Go 1.25+ (Gin, fsnotify, SQLite/PostgreSQL, slog)
 - **前端**: React 19, TypeScript, Tailwind CSS v4, Vite
 - **通知子模块** (`notifier/`): 独立 Go module，Telegram/QQ Bot (OneBot v11)
 
