@@ -1,5 +1,8 @@
 version: 2
 
+# 每个 ecosystem 都配 groups：把 minor/patch 合并进一个 PR（噪音小、一次验证一次发版），
+# major 仍各自单开 PR（基础镜像/构建工具大版本需逐个建镜像 smoke 验证，不能混在一起）。
+# 不配 groups 时每个依赖一个 PR，曾堆到 19 个（2026-06-11 清理实践）。
 updates:
   # Go modules (root)
   - package-ecosystem: "gomod"
@@ -10,6 +13,11 @@ updates:
       time: "03:00"
       timezone: "Asia/Shanghai"
     open-pull-requests-limit: 5
+    groups:
+      gomod-root:
+        update-types:
+          - "minor"
+          - "patch"
 
   # Go modules (notifier submodule)
   - package-ecosystem: "gomod"
@@ -20,6 +28,11 @@ updates:
       time: "03:00"
       timezone: "Asia/Shanghai"
     open-pull-requests-limit: 5
+    groups:
+      gomod-notifier:
+        update-types:
+          - "minor"
+          - "patch"
 
   # npm (frontend)
   - package-ecosystem: "npm"
@@ -30,6 +43,11 @@ updates:
       time: "03:00"
       timezone: "Asia/Shanghai"
     open-pull-requests-limit: 5
+    groups:
+      npm-frontend:
+        update-types:
+          - "minor"
+          - "patch"
 
   # GitHub Actions
   - package-ecosystem: "github-actions"
@@ -40,6 +58,11 @@ updates:
       time: "03:00"
       timezone: "Asia/Shanghai"
     open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        update-types:
+          - "minor"
+          - "patch"
 
   # Docker (root Dockerfile)
   - package-ecosystem: "docker"
@@ -50,6 +73,11 @@ updates:
       time: "03:00"
       timezone: "Asia/Shanghai"
     open-pull-requests-limit: 3
+    groups:
+      docker-root:
+        update-types:
+          - "minor"
+          - "patch"
 
   # Docker (notifier Dockerfile)
   - package-ecosystem: "docker"
@@ -60,3 +88,8 @@ updates:
       time: "03:00"
       timezone: "Asia/Shanghai"
     open-pull-requests-limit: 3
+    groups:
+      docker-notifier:
+        update-types:
+          - "minor"
+          - "patch"
