@@ -405,6 +405,8 @@
       "copyTemplateHint": "連絡テンプレートをコピー：",
       "contactTemplate": "こんにちは、掲載申請を送信しました（番号：{{id}}、プロバイダー：{{provider}}）。ご確認をお願いします。",
       "newSubmission": "新規申請",
+      "proofExpiredBanner": "テスト証明の期限切れ。前の手順に戻って再テストしてください",
+      "proofExpiringSoon": "テスト証明の期限が近づいています。早めに送信してください",
       "agreement": {
         "title": "入会案内と確認事項",
         "intro": "本サービスは有料掲載です。各項目をお読みのうえチェックし、すべて確認後に送信できます：",

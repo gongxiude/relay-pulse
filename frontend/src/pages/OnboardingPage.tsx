@@ -85,7 +85,7 @@ export default function OnboardingPage() {
 
               {/* 错误提示 */}
               {error && (
-                <div className="p-4 bg-danger/10 border border-danger/20 rounded-lg">
+                <div className="p-4 bg-danger/10 border border-danger/20 rounded-lg" role="alert">
                   <p className="text-danger font-medium">{error}</p>
                 </div>
               )}

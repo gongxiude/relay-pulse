@@ -444,6 +444,8 @@
       "copyTemplateHint": "Copy contact template:",
       "contactTemplate": "Hi, I submitted a listing application (ID: {{id}}, provider: {{provider}}), please review.",
       "newSubmission": "New Application",
+      "proofExpiredBanner": "Test proof expired, please go back and re-run the test",
+      "proofExpiringSoon": "Test proof is about to expire, please submit soon",
       "agreement": {
         "title": "Listing Terms & Acknowledgement",
         "intro": "This is a paid listing. Please read and check each item; all must be confirmed before submitting:",

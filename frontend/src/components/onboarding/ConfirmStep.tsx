@@ -305,13 +305,13 @@ export function ConfirmStep({ formData, updateField, submitResult, isSubmitting,
       {proofExpired && (
         <div className="flex items-center gap-2 p-3 bg-danger/10 border border-danger/20 rounded-lg text-sm text-danger" role="alert">
           <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-          <span>测试证明已过期，请返回上一步重新测试</span>
+          <span>{t('onboarding.confirm.proofExpiredBanner')}</span>
         </div>
       )}
       {proofWarning && (
         <div className="flex items-center gap-2 p-3 bg-warning/10 border border-warning/20 rounded-lg text-sm text-warning" role="status" aria-live="polite">
           <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-          <span>测试证明即将过期，请尽快提交</span>
+          <span>{t('onboarding.confirm.proofExpiringSoon')}</span>
         </div>
       )}
 
@@ -332,9 +332,9 @@ export function ConfirmStep({ formData, updateField, submitResult, isSubmitting,
             disabled={isSubmitting || !allClausesChecked || proofExpired}
             title={
               proofExpired
-                ? '测试证明已过期，请返回上一步重新测试'
+                ? t('onboarding.confirm.proofExpiredBanner')
                 : !allClausesChecked
-                  ? '请先勾选所有条款'
+                  ? t('onboarding.confirm.agreement.allRequiredHint')
                   : undefined
             }
             className="px-6 py-3 bg-accent text-white rounded-lg font-medium hover:bg-accent-strong transition-colors disabled:opacity-50 disabled:cursor-not-allowed"

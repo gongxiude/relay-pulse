@@ -447,6 +447,8 @@
       "copyTemplateHint": "一键复制联系模板：",
       "contactTemplate": "您好，我提交了一个收录申请（编号：{{id}}，服务商：{{provider}}），请审核。",
       "newSubmission": "提交新申请",
+      "proofExpiredBanner": "测试证明已过期，请返回上一步重新测试",
+      "proofExpiringSoon": "测试证明即将过期，请尽快提交",
       "agreement": {
         "title": "入驻须知与确认",
         "intro": "本平台为付费收录，请逐条阅读并勾选，全部确认后方可提交：",

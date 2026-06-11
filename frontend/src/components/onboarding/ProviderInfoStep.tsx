@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronRight } from 'lucide-react';
 import type { OnboardingFormData, OnboardingMeta, ChannelSourceOption } from '../../types/onboarding';
@@ -55,9 +55,11 @@ export function ProviderInfoStep({ formData, updateField, meta, onNext }: Provid
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meta, sources]);
 
+  // 服务商名校验仅在失焦后暴露错误，避免输入中途逐键闪红（inline-validation：validate on blur）。
+  const [providerNameTouched, setProviderNameTouched] = useState(false);
   const providerName = formData.providerName.trim();
   const providerNameValid = providerName.length > 0 && ASCII_PRINTABLE.test(providerName);
-  const providerNameError = providerName.length > 0 && !providerNameValid;
+  const providerNameError = providerNameTouched && providerName.length > 0 && !providerNameValid;
 
   const groupValid = formData.channelGroup === '' || GROUP_PATTERN.test(formData.channelGroup);
 
@@ -113,12 +115,19 @@ export function ProviderInfoStep({ formData, updateField, meta, onNext }: Provid
           required
           value={formData.providerName}
           onChange={(e) => updateField('providerName', e.target.value)}
+          onBlur={() => setProviderNameTouched(true)}
+          aria-invalid={providerNameError || undefined}
+          aria-describedby="ob-provider-name-hint"
           placeholder={t('onboarding.providerInfo.providerNamePlaceholder')}
           className={`w-full px-4 py-2 bg-surface border rounded-lg text-primary placeholder-muted focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 ${
             providerNameError ? 'border-danger' : 'border-muted'
           }`}
         />
-        <p className={`mt-1 text-xs ${providerNameError ? 'text-danger' : 'text-secondary'}`}>
+        <p
+          id="ob-provider-name-hint"
+          className={`mt-1 text-xs ${providerNameError ? 'text-danger' : 'text-secondary'}`}
+          role={providerNameError ? 'alert' : undefined}
+        >
           {t('onboarding.providerInfo.providerNameHint', { defaultValue: '仅支持英文/数字/符号，不能包含中文' })}
         </p>
       </div>
