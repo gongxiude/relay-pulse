@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2, AlertCircle, ChevronDown, ChevronUp, Check, X, Play, Trash2, Save, ArrowRight } from 'lucide-react';
 import type { AdminChangeRequest, ChangeRequestStatus } from '../../types/change';
+import { fieldShapeClass } from './fieldStyles';
 
 // ── 编辑相关常量与工具 ──────────────────────────────────
 
@@ -250,7 +251,7 @@ export function ChangeRequestList({
                             }));
                           }}
                           rows={2}
-                          className="w-full rounded-md border border-default bg-surface px-2.5 py-1.5 text-xs text-primary resize-none read-only:opacity-60 read-only:cursor-not-allowed focus:outline-none focus:border-accent/50"
+                          className={`${fieldShapeClass({ dense: true, xs: true })} w-full resize-none read-only:opacity-60 read-only:cursor-not-allowed`}
                         />
                       </div>
 
@@ -279,7 +280,7 @@ export function ChangeRequestList({
                                     [cr.public_id]: { ...draft, proposed: { ...draft.proposed, sponsor_level: value } },
                                   }));
                                 }}
-                                className="rounded-md border border-default bg-surface px-2 py-1 text-xs text-primary disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus:border-accent/50"
+                                className={`${fieldShapeClass({ dense: true, xs: true })} disabled:opacity-60 disabled:cursor-not-allowed`}
                               >
                                 {SPONSOR_LEVEL_OPTIONS.map(opt => (
                                   <option key={opt || 'empty'} value={opt}>{opt || '(空)'}</option>
@@ -297,7 +298,7 @@ export function ChangeRequestList({
                                     [cr.public_id]: { ...draft, proposed: { ...draft.proposed, [field]: value } },
                                   }));
                                 }}
-                                className="rounded-md border border-default bg-surface px-2.5 py-1 text-xs text-primary read-only:opacity-60 read-only:cursor-not-allowed focus:outline-none focus:border-accent/50"
+                                className={`${fieldShapeClass({ dense: true, xs: true })} read-only:opacity-60 read-only:cursor-not-allowed`}
                               />
                             )}
                           </div>
