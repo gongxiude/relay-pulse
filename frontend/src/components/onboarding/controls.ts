@@ -1,12 +1,12 @@
 /**
- * 申请向导（onboarding）共享字段样式 —— 单一样式源。
+ * 公开提交向导共享样式 —— 单一样式源。
  *
- * 三步表单（服务商信息 / 连通性测试 / 确认）原先把同一串 input / select / label / hint
- * 的 className 逐字重复了十余处，极易在后续维护中漂移成多套视觉。这里收敛成常量，
- * 任一调整改一处即全量生效。
+ * 同时服务「申请收录」(OnboardingPage) 与「申请变更」(ChangeRequestPage) 两个面向公开
+ * 访客的多步向导：它们视觉上应是同一个产品。这里把输入 / 下拉 / 标签 / 提示 / 主次按钮
+ * 的 className 收敛成常量，任一调整改一处即两个向导同步生效，杜绝逐字重复带来的漂移。
  *
- * 规格为 roomy（px-4 py-2 / rounded-lg / ring-2），面向公开访客的申请流程；后台 admin
- * 的密集表单另有 components/admin/FormControls，待一致性阶段再对齐到本基准。
+ * 规格为 roomy（px-4 py-2 / rounded-lg / ring-2）；后台 admin 的密集表单另有
+ * components/admin/fieldStyles（dense 设计语言），不在此处共享。
  */
 
 /**
@@ -28,3 +28,13 @@ export const labelClass = 'block text-sm font-medium text-primary mb-2';
 
 /** 字段下方的说明 / 提示文字。 */
 export const hintClass = 'mt-1 text-xs text-secondary';
+
+/** 主操作按钮（下一步 / 提交）：实心强调色。调用方可附加 w-full / flex-1 / justify-center。 */
+export const primaryButtonClass =
+  'flex items-center gap-2 px-6 py-3 bg-accent text-white rounded-lg font-medium ' +
+  'hover:bg-accent-strong transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+
+/** 次要 / 返回按钮：描边低强调。 */
+export const secondaryButtonClass =
+  'flex items-center gap-2 px-6 py-3 bg-surface border border-muted text-secondary ' +
+  'rounded-lg hover:bg-elevated transition-colors';

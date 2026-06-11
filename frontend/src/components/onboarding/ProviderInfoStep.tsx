@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronRight } from 'lucide-react';
 import type { OnboardingFormData, OnboardingMeta, ChannelSourceOption } from '../../types/onboarding';
-import { inputClass, selectClass, labelClass, hintClass } from './controls';
+import { inputClass, selectClass, labelClass, hintClass, primaryButtonClass } from './controls';
 
 interface ProviderInfoStepProps {
   formData: OnboardingFormData;
@@ -270,7 +270,7 @@ export function ProviderInfoStep({ formData, updateField, meta, onNext }: Provid
         <button
           type="submit"
           disabled={!canProceed}
-          className="flex items-center gap-2 px-6 py-3 bg-accent text-white rounded-lg font-medium hover:bg-accent-strong transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className={primaryButtonClass}
         >
           {t('onboarding.next')}
           <ChevronRight className="w-4 h-4" />

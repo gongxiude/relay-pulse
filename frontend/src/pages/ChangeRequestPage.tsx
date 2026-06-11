@@ -6,6 +6,7 @@ import { ArrowLeft, ArrowRight, Check, Loader2, Key, AlertCircle, Copy, Activity
 import { LANGUAGE_PATH_MAP, type SupportedLanguage } from '../i18n';
 import { useChangeRequest, type ChangeStep } from '../hooks/useChangeRequest';
 import type { AuthCandidate } from '../types/change';
+import { inputClass, selectClass, primaryButtonClass, secondaryButtonClass } from '../components/onboarding/controls';
 
 /** 步骤指示器 */
 function StepIndicator({ current, requiresTest }: { current: ChangeStep; requiresTest: boolean }) {
@@ -74,7 +75,7 @@ function AuthStep({
               onChange={e => setApiKey(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && authenticate()}
               placeholder={t('changeRequest.auth.placeholder')}
-              className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-elevated border border-default text-primary placeholder:text-muted focus:border-accent/50 focus:outline-none transition"
+              className={`${inputClass()} pl-10`}
             />
           </div>
         </div>
@@ -89,7 +90,7 @@ function AuthStep({
         <button
           onClick={authenticate}
           disabled={isAuthenticating || apiKey.length < 10}
-          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-accent text-white font-medium hover:bg-accent-strong transition disabled:opacity-50 disabled:cursor-not-allowed"
+          className={`w-full justify-center ${primaryButtonClass}`}
         >
           {isAuthenticating ? <Loader2 size={16} className="animate-spin" /> : null}
           {t('changeRequest.auth.submit')}
@@ -136,7 +137,7 @@ function EditStep({
             <button
               key={c.monitor_key}
               onClick={() => setSelectedCandidate(c)}
-              className="w-full flex items-center justify-between p-4 rounded-xl bg-elevated border border-default hover:border-accent/40 transition text-left"
+              className="w-full flex items-center justify-between p-4 rounded-lg bg-elevated border border-default hover:border-accent/40 transition text-left"
             >
               <div>
                 <div className="font-medium text-primary">{c.provider_name}</div>
@@ -149,7 +150,7 @@ function EditStep({
           ))}
         </div>
         <button onClick={goBack} className="mt-4 text-sm text-muted hover:text-secondary transition">
-          <ArrowLeft size={14} className="inline mr-1" />{t('changeRequest.back')}
+          <ArrowLeft size={14} />{t('changeRequest.back')}
         </button>
       </div>
     );
@@ -184,7 +185,7 @@ function EditStep({
               value={changes[f.key] ?? ''}
               onChange={e => updateChange(f.key, e.target.value)}
               placeholder={t('changeRequest.edit.noChange')}
-              className="w-full px-3 py-2.5 rounded-xl bg-elevated border border-default text-primary placeholder:text-muted focus:border-accent/50 focus:outline-none transition"
+              className={inputClass()}
             />
           </div>
         ))}
@@ -200,7 +201,7 @@ function EditStep({
             value={newApiKey}
             onChange={e => setNewApiKey(e.target.value)}
             placeholder={t('changeRequest.edit.newApiKeyPlaceholder')}
-            className="w-full px-3 py-2.5 rounded-xl bg-elevated border border-default text-primary placeholder:text-muted focus:border-accent/50 focus:outline-none transition"
+            className={inputClass()}
           />
         </div>
 
@@ -212,12 +213,12 @@ function EditStep({
         )}
 
         <div className="flex gap-3 pt-2">
-          <button onClick={goBack} className="px-4 py-2.5 rounded-xl border border-default text-secondary hover:text-primary transition">
-            <ArrowLeft size={14} className="inline mr-1" />{t('changeRequest.back')}
+          <button onClick={goBack} className={secondaryButtonClass}>
+            <ArrowLeft size={14} />{t('changeRequest.back')}
           </button>
           <button
             onClick={proceedFromEdit}
-            className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-accent text-white font-medium hover:bg-accent-strong transition"
+            className={`flex-1 justify-center ${primaryButtonClass}`}
           >
             {t('changeRequest.next')}<ArrowRight size={14} />
           </button>
@@ -263,7 +264,7 @@ function TestStep({
 
       <div className="space-y-4">
         {/* Test type info */}
-        <div className="p-3 rounded-xl bg-elevated border border-default">
+        <div className="p-3 rounded-lg bg-elevated border border-default">
           <div className="text-xs text-muted mb-0.5">{t('changeRequest.test.testType', { defaultValue: '服务类型' })}</div>
           <div className="text-sm text-primary font-medium">
             {selectedCandidate.test_type_name || selectedCandidate.test_type || selectedCandidate.service}
@@ -280,7 +281,7 @@ function TestStep({
               value={selectedVariant}
               onChange={e => setSelectedVariant(e.target.value)}
               disabled={isTesting}
-              className="w-full px-3 py-2.5 rounded-xl bg-elevated border border-default text-primary focus:border-accent/50 focus:outline-none transition disabled:opacity-50"
+              className={selectClass}
             >
               {variants.map(v => (
                 <option key={v.id} value={v.id}>{v.id}</option>
@@ -292,7 +293,7 @@ function TestStep({
         {!testResult && !isTesting && (
           <button
             onClick={runTest}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-accent text-white font-medium hover:bg-accent-strong transition"
+            className={`w-full justify-center ${primaryButtonClass}`}
           >
             {t('changeRequest.test.run')}
           </button>
@@ -306,7 +307,7 @@ function TestStep({
         )}
 
         {testResult && !isTesting && (
-          <div className={`p-4 rounded-xl border ${passed ? 'border-success/40 bg-success/5' : 'border-danger/40 bg-danger/5'}`}>
+          <div className={`p-4 rounded-lg border ${passed ? 'border-success/40 bg-success/5' : 'border-danger/40 bg-danger/5'}`}>
             <div className={`font-medium ${passed ? 'text-success' : 'text-danger'}`}>
               {passed ? t('changeRequest.test.passed') : t('changeRequest.test.failed')}
             </div>
@@ -322,7 +323,7 @@ function TestStep({
         {!passed && testResult && !isTesting && (
           <button
             onClick={runTest}
-            className="w-full px-4 py-2.5 rounded-xl border border-default text-secondary hover:text-primary transition"
+            className={`w-full justify-center ${secondaryButtonClass}`}
           >
             {t('changeRequest.test.retry')}
           </button>
@@ -336,13 +337,13 @@ function TestStep({
         )}
 
         <div className="flex gap-3 pt-2">
-          <button onClick={goBack} className="px-4 py-2.5 rounded-xl border border-default text-secondary hover:text-primary transition">
-            <ArrowLeft size={14} className="inline mr-1" />{t('changeRequest.back')}
+          <button onClick={goBack} className={secondaryButtonClass}>
+            <ArrowLeft size={14} />{t('changeRequest.back')}
           </button>
           {passed && (
             <button
               onClick={goNext}
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-accent text-white font-medium hover:bg-accent-strong transition"
+              className={`flex-1 justify-center ${primaryButtonClass}`}
             >
               {t('changeRequest.next')}<ArrowRight size={14} />
             </button>
@@ -387,7 +388,7 @@ function ReviewStep({
       <p className="text-secondary text-sm mb-6">{t('changeRequest.review.description')}</p>
 
       <div className="space-y-3 mb-6">
-        <div className="p-4 rounded-xl bg-elevated border border-default">
+        <div className="p-4 rounded-lg bg-elevated border border-default">
           <div className="text-sm font-medium text-muted mb-2">{t('changeRequest.review.target')}</div>
           <div className="text-primary font-medium">{selectedCandidate.provider_name}</div>
           <div className="text-sm text-secondary">{selectedCandidate.channel_name} · {selectedCandidate.monitor_key}</div>
@@ -422,13 +423,13 @@ function ReviewStep({
       )}
 
       <div className="flex gap-3">
-        <button onClick={goBack} className="px-4 py-2.5 rounded-xl border border-default text-secondary hover:text-primary transition">
-          <ArrowLeft size={14} className="inline mr-1" />{t('changeRequest.back')}
+        <button onClick={goBack} className={secondaryButtonClass}>
+          <ArrowLeft size={14} />{t('changeRequest.back')}
         </button>
         <button
           onClick={submit}
           disabled={isSubmitting}
-          className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-accent text-white font-medium hover:bg-accent-strong transition disabled:opacity-50"
+          className={`flex-1 justify-center ${primaryButtonClass}`}
         >
           {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
           {t('changeRequest.review.submit')}
@@ -457,7 +458,7 @@ function DoneStep({ publicId, reset, onViewStatus }: { publicId: string; reset: 
       <h2 className="text-xl font-semibold text-primary mb-2">{t('changeRequest.done.title')}</h2>
       <p className="text-secondary text-sm mb-6">{t('changeRequest.done.description')}</p>
 
-      <div className="flex items-center justify-center gap-2 p-3 rounded-xl bg-elevated border border-default mb-6">
+      <div className="flex items-center justify-center gap-2 p-3 rounded-lg bg-elevated border border-default mb-6">
         <code className="text-sm text-primary font-mono">{publicId}</code>
         <button onClick={copyId} className="text-muted hover:text-accent transition" title={t('onboarding.confirm.copy')}>
           <Copy size={14} />
@@ -468,14 +469,14 @@ function DoneStep({ publicId, reset, onViewStatus }: { publicId: string; reset: 
       <div className="flex flex-wrap justify-center gap-3">
         <button
           onClick={onViewStatus}
-          className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-accent text-white font-medium hover:bg-accent-strong transition"
+          className={primaryButtonClass}
         >
           <Search className="w-4 h-4" />
           {t('statusQuery.viewProgress')}
         </button>
         <button
           onClick={reset}
-          className="px-6 py-2.5 rounded-xl border border-default text-secondary hover:text-primary transition"
+          className={secondaryButtonClass}
         >
           {t('changeRequest.done.newRequest')}
         </button>

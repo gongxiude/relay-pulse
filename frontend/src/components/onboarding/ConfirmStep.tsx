@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, Copy, Check, RotateCcw, Search, ExternalLink, AlertTriangle } from 'lucide-react';
 import type { OnboardingFormData, SubmitOnboardingResponse } from '../../types/onboarding';
 import { LANGUAGE_PATH_MAP, type SupportedLanguage } from '../../i18n';
+import { primaryButtonClass, secondaryButtonClass } from './controls';
 
 interface ConfirmStepProps {
   formData: OnboardingFormData;
@@ -178,7 +179,7 @@ export function ConfirmStep({ formData, updateField, submitResult, isSubmitting,
           <button
             type="button"
             onClick={() => navigate(`${buildPath('/contact/status')}?id=${encodeURIComponent(submitResult.public_id)}`)}
-            className="flex items-center gap-2 px-6 py-3 bg-accent text-white rounded-lg font-medium hover:bg-accent-strong transition-colors"
+            className={primaryButtonClass}
           >
             <Search className="w-4 h-4" />
             {t('statusQuery.viewProgress')}
@@ -186,7 +187,7 @@ export function ConfirmStep({ formData, updateField, submitResult, isSubmitting,
           <button
             type="button"
             onClick={onReset}
-            className="flex items-center gap-2 px-6 py-3 bg-surface border border-muted text-secondary rounded-lg hover:bg-elevated transition-colors"
+            className={secondaryButtonClass}
           >
             <RotateCcw className="w-4 h-4" />
             {t('onboarding.confirm.newSubmission')}
@@ -320,7 +321,7 @@ export function ConfirmStep({ formData, updateField, submitResult, isSubmitting,
         <button
           type="button"
           onClick={onBack}
-          className="flex items-center justify-center gap-2 px-6 py-3 bg-surface border border-muted text-secondary rounded-lg hover:bg-elevated transition-colors"
+          className={`${secondaryButtonClass} justify-center`}
         >
           <ChevronLeft className="w-4 h-4" />
           {t('onboarding.back')}
