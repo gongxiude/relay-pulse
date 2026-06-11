@@ -338,7 +338,7 @@ export function ConfirmStep({ formData, updateField, submitResult, isSubmitting,
                   ? t('onboarding.confirm.agreement.allRequiredHint')
                   : undefined
             }
-            className="px-6 py-3 bg-accent text-white rounded-lg font-medium hover:bg-accent-strong transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className={primaryButtonClass}
           >
             {isSubmitting ? t('onboarding.confirm.submitting') : t('onboarding.confirm.submit')}
           </button>

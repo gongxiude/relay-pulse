@@ -6,7 +6,7 @@ import { ArrowLeft, ArrowRight, Check, Loader2, Key, AlertCircle, Copy, Activity
 import { LANGUAGE_PATH_MAP, type SupportedLanguage } from '../i18n';
 import { useChangeRequest, type ChangeStep } from '../hooks/useChangeRequest';
 import type { AuthCandidate } from '../types/change';
-import { inputClass, selectClass, primaryButtonClass, secondaryButtonClass } from '../components/onboarding/controls';
+import { inputClass, selectClass, labelClass, primaryButtonClass, secondaryButtonClass } from '../components/onboarding/controls';
 
 /** 步骤指示器 */
 function StepIndicator({ current, requiresTest }: { current: ChangeStep; requiresTest: boolean }) {
@@ -66,7 +66,7 @@ function AuthStep({
 
       <div className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-secondary mb-1.5">API Key</label>
+          <label className={labelClass}>API Key</label>
           <div className="relative">
             <Key size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
             <input
@@ -149,7 +149,7 @@ function EditStep({
             </button>
           ))}
         </div>
-        <button onClick={goBack} className="mt-4 text-sm text-muted hover:text-secondary transition">
+        <button onClick={goBack} className="mt-4 inline-flex items-center gap-1 text-sm text-muted hover:text-secondary transition">
           <ArrowLeft size={14} />{t('changeRequest.back')}
         </button>
       </div>
@@ -176,7 +176,7 @@ function EditStep({
       <div className="space-y-4">
         {fields.map(f => (
           <div key={f.key}>
-            <label className="block text-sm font-medium text-secondary mb-1">
+            <label className={labelClass}>
               {f.label}
               <span className="text-muted ml-2 font-normal">({t('changeRequest.edit.current')}: {f.current || '—'})</span>
             </label>
@@ -192,7 +192,7 @@ function EditStep({
 
         {/* 新 API Key */}
         <div>
-          <label className="block text-sm font-medium text-secondary mb-1">
+          <label className={labelClass}>
             {t('changeRequest.fields.newApiKey')}
             <span className="text-muted ml-2 font-normal">({t('changeRequest.edit.current')}: ...{selectedCandidate.key_last4})</span>
           </label>
@@ -274,7 +274,7 @@ function TestStep({
         {/* Variant selector */}
         {showVariantSelect && (
           <div>
-            <label className="block text-sm font-medium text-secondary mb-1.5">
+            <label className={labelClass}>
               {t('changeRequest.test.variant', { defaultValue: '请求模板' })}
             </label>
             <select
