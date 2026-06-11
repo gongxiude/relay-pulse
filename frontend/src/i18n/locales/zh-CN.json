@@ -542,7 +542,8 @@
       "failed": "测试未通过",
       "latency": "延迟",
       "retry": "重新测试",
-      "requestFailed": "测试请求失败"
+      "requestFailed": "测试请求失败",
+      "proofExpired": "测试证明已过期，请返回重新测试"
     },
     "review": {
       "title": "确认变更",

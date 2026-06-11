@@ -19,6 +19,7 @@ interface InlineTestResult {
   response_snippet?: string;
   probe_id: string;
   test_proof?: string;
+  proof_expires_at?: number;
 }
 
 export function useChangeRequest() {
@@ -43,6 +44,9 @@ export function useChangeRequest() {
   const [testJobId, setTestJobId] = useState('');
   const [testResult, setTestResult] = useState<InlineTestResult | null>(null);
   const [testProof, setTestProof] = useState('');
+  // proof 绝对过期时间（ms）。来源是后端按真实 proof_ttl 下发的 proof_expires_at，
+  // 避免前端硬编码 TTL 与后端漂移；提交前据此做本地预检，与 onboarding 流程对齐。
+  const [proofExpiresAt, setProofExpiresAt] = useState<number | null>(null);
 
   // Submit
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -57,6 +61,7 @@ export function useChangeRequest() {
     setTestJobId('');
     setTestResult(null);
     setTestProof('');
+    setProofExpiresAt(null);
   }, []);
 
   // 解析候选通道的默认变体（优先 default_test_variant，兜底首个变体）
@@ -107,8 +112,7 @@ export function useChangeRequest() {
     setSelectedVariant('');
     setChanges({});
     setNewApiKey('');
-    setTestResult(null);
-    setTestProof('');
+    resetTestState();
     try {
       const resp = await apiPost<AuthResponse>('/api/change/auth', { api_key: apiKey });
       setCandidates(resp.candidates);
@@ -121,7 +125,7 @@ export function useChangeRequest() {
     } finally {
       setIsAuthenticating(false);
     }
-  }, [apiKey, t, setStep, setSelectedCandidate]);
+  }, [apiKey, t, setStep, setSelectedCandidate, resetTestState]);
 
   // 更新变更字段
   const updateChange = useCallback((field: string, value: string) => {
@@ -134,7 +138,17 @@ export function useChangeRequest() {
       }
       return next;
     });
-  }, []);
+    // base_url 是被探测的目标，一旦改动，已有 proof（绑定旧 URL）即失效，清掉强制重测。
+    if (field === 'base_url') {
+      resetTestState();
+    }
+  }, [resetTestState]);
+
+  // 新 API Key 改动同样会让 proof（绑定 key 指纹）失效，清测试状态强制重测。
+  const handleSetNewApiKey = useCallback((v: string) => {
+    setNewApiKey(v);
+    resetTestState();
+  }, [resetTestState]);
 
   // 判断是否需要测试（base_url 变更或提供新 API Key 时需要通过探测测试）
   const requiresTest = Object.keys(changes).some(
@@ -162,6 +176,7 @@ export function useChangeRequest() {
     setError(null);
     setTestResult(null);
     setTestProof('');
+    setProofExpiresAt(null);
 
     try {
       // 确定测试参数：使用变更后的值
@@ -183,6 +198,8 @@ export function useChangeRequest() {
 
       if (resp.probe_status === 1 && resp.test_proof) {
         setTestProof(resp.test_proof);
+        // proof_expires_at 为 Unix 秒；缺省时（前后端同体部署理论上不会）置 null。
+        setProofExpiresAt(resp.proof_expires_at ? resp.proof_expires_at * 1000 : null);
       }
     } catch (e) {
       setError(e instanceof ApiError ? e.message : t('changeRequest.test.requestFailed'));
@@ -194,6 +211,13 @@ export function useChangeRequest() {
   // 提交变更
   const submit = useCallback(async () => {
     if (!selectedCandidate) return;
+    // 提交前本地预检 proof 是否过期（与 onboarding 流程对齐）。后端 Verify 仍是权威校验，
+    // 这里只为在打服务器前给出清晰的「请重新测试」提示，避免一次无谓往返。
+    // 必须 gate 在 requiresTest 上：不需要测试的变更没有 proof，残留的 proofExpiresAt 不应误拦。
+    if (requiresTest && testProof && proofExpiresAt !== null && Date.now() >= proofExpiresAt) {
+      setError(t('changeRequest.test.proofExpired'));
+      return;
+    }
     setIsSubmitting(true);
     setError(null);
 
@@ -229,7 +253,7 @@ export function useChangeRequest() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [selectedCandidate, selectedVariant, changes, newApiKey, apiKey, requiresTest, testProof, testJobId, testResult, i18n.language, t, setStep]);
+  }, [selectedCandidate, selectedVariant, changes, newApiKey, apiKey, requiresTest, testProof, testJobId, testResult, proofExpiresAt, i18n.language, t, setStep]);
 
   // 重置
   const reset = useCallback(() => {
@@ -244,6 +268,7 @@ export function useChangeRequest() {
     setTestJobId('');
     setTestResult(null);
     setTestProof('');
+    setProofExpiresAt(null);
     setIsSubmitting(false);
     setPublicId('');
     setError(null);
@@ -269,7 +294,7 @@ export function useChangeRequest() {
     changes,
     updateChange,
     newApiKey,
-    setNewApiKey,
+    setNewApiKey: handleSetNewApiKey,
     requiresTest,
     proceedFromEdit,
 

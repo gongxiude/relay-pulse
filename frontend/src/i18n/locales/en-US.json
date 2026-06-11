@@ -539,7 +539,8 @@
       "failed": "Test Failed",
       "latency": "Latency",
       "retry": "Retry Test",
-      "requestFailed": "Test request failed"
+      "requestFailed": "Test request failed",
+      "proofExpired": "Test proof expired, please re-run the test"
     },
     "review": {
       "title": "Confirm Changes",

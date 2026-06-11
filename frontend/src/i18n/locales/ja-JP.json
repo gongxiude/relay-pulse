@@ -549,7 +549,8 @@
       "failed": "テスト不合格",
       "latency": "レイテンシ",
       "retry": "再テスト",
-      "requestFailed": "テストリクエストに失敗しました"
+      "requestFailed": "テストリクエストに失敗しました",
+      "proofExpired": "テスト証明の期限切れ。再テストしてください"
     },
     "review": {
       "title": "変更の確認",
