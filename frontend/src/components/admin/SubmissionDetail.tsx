@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Lock } from 'lucide-react';
 import type { AdminSubmission, OnboardingTestResult } from '../../types/onboarding';
 import { FormField, SelectField, ReadOnlyField } from './FormControls';
+import { CurlCommandBlock } from './CurlCommandBlock';
 
 /** 可编辑字段列表 — 用于本地 draft 初始化和脏检测 */
 const EDITABLE_FIELDS = [
@@ -651,6 +652,7 @@ export const SubmissionDetail: React.FC<SubmissionDetailProps> = ({
           {testResult.error_message && (
             <p className="text-xs text-danger">{testResult.error_message}</p>
           )}
+          {testResult.curl && <CurlCommandBlock curl={testResult.curl} apiKey={apiKey} />}
         </div>
       )}
     </div>

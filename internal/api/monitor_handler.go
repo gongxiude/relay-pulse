@@ -578,7 +578,7 @@ func (h *Handler) AdminProbeMonitor(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
 
-	result := h.inlineProber.ProbeConfig(ctx, cfg)
+	result := h.inlineProber.ProbeConfig(ctx, cfg, probe.WithCurlCapture())
 
 	c.JSON(http.StatusOK, gin.H{
 		"probe_id":         result.ProbeID,
@@ -588,6 +588,7 @@ func (h *Handler) AdminProbeMonitor(c *gin.Context) {
 		"latency":          result.Latency,
 		"error_message":    result.ErrorMessage,
 		"response_snippet": result.ResponseSnippet,
+		"curl":             result.Curl,
 	})
 }
 

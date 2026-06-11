@@ -27,6 +27,7 @@ type probeResult struct {
 	HTTPCode        int
 	Latency         int // ms
 	ResponseSnippet string
+	CurlCommand     string // 仅 captureCurl 时填充，见 buildCurlCommand
 	Err             error
 }
 
@@ -48,7 +49,7 @@ func newInternalProber(guard *SSRFGuard, maxBodyBytes int64, uidMgr *identity.Us
 	}
 }
 
-func (p *internalProber) probe(ctx context.Context, cfg *config.ServiceConfig) *probeResult {
+func (p *internalProber) probe(ctx context.Context, cfg *config.ServiceConfig, captureCurl bool) *probeResult {
 	result := &probeResult{
 		Status:    0,
 		SubStatus: "none",
@@ -56,7 +57,8 @@ func (p *internalProber) probe(ctx context.Context, cfg *config.ServiceConfig) *
 
 	probeURL, probeBody, probeHeaders, probeSuccessContains, _, _ := monitor.InjectVariables(cfg, p.uidMgr)
 
-	reqBody := bytes.NewBuffer([]byte(strings.TrimSpace(probeBody)))
+	bodyBytes := []byte(strings.TrimSpace(probeBody))
+	reqBody := bytes.NewBuffer(bodyBytes)
 	req, err := http.NewRequestWithContext(ctx, cfg.Method, probeURL, reqBody)
 	if err != nil {
 		result.SubStatus = "invalid_request"
@@ -67,6 +69,12 @@ func (p *internalProber) probe(ctx context.Context, cfg *config.ServiceConfig) *
 
 	for k, v := range probeHeaders {
 		req.Header.Set(k, v)
+	}
+
+	// 在发送前用「实际要发的」请求快照生成 curl（仅 admin 测试路径开启）。
+	// 复用同一次 InjectVariables 的填充结果，保证 curl 与真实请求逐项一致。
+	if captureCurl {
+		result.CurlCommand = buildCurlCommand(req, bodyBytes, cfg.APIKey)
 	}
 
 	start := time.Now()
@@ -176,12 +184,29 @@ type Result struct {
 	ErrorMessage    string `json:"error_message,omitempty"`
 	ResponseSnippet string `json:"response_snippet,omitempty"`
 	ProbeID         string `json:"probe_id"`
+	// Curl 为本次实际请求快照对应的可复制 curl 命令；默认脱敏（密钥用 $RP_API_KEY
+	// 占位）。仅在调用方传入 WithCurlCapture() 时填充，公开自测路径不下发。
+	Curl string `json:"curl,omitempty"`
 }
 
 // InlineProber 提供同步内联探测能力。
 type InlineProber struct {
 	prober *internalProber
 	sem    chan struct{}
+}
+
+// probeOptions 聚合单次内联探测的可选诊断开关。
+type probeOptions struct {
+	captureCurl bool
+}
+
+// ProbeOption 控制单次内联探测的可选诊断输出。
+type ProbeOption func(*probeOptions)
+
+// WithCurlCapture 让 ProbeConfig 返回本次实际请求快照对应的 curl 命令（默认脱敏）。
+// 仅供管理员测试入口使用；公开 onboarding/change 自测不要传入。
+func WithCurlCapture() ProbeOption {
+	return func(o *probeOptions) { o.captureCurl = true }
 }
 
 // NewInlineProber 创建内联探测器。
@@ -258,8 +283,8 @@ func (p *InlineProber) Probe(ctx context.Context, serviceType, templateName, bas
 	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// 执行底层探测
-	pr := p.prober.probe(probeCtx, cfg)
+	// 执行底层探测（模板自测路径不输出 curl）
+	pr := p.prober.probe(probeCtx, cfg, false)
 	if pr == nil {
 		result.SubStatus = "internal_error"
 		result.ErrorMessage = "探测器返回空结果"
@@ -272,7 +297,9 @@ func (p *InlineProber) Probe(ctx context.Context, serviceType, templateName, bas
 	result.Latency = pr.Latency
 	result.ResponseSnippet = pr.ResponseSnippet
 	if pr.Err != nil {
-		result.ErrorMessage = pr.Err.Error()
+		// 传输层错误（*url.Error）会带完整请求 URL，URL 内嵌 key 的模板会泄漏密钥；
+		// 在写入响应/日志前统一脱敏。
+		result.ErrorMessage = redactSecrets(pr.Err.Error(), secretVariants(apiKey))
 	}
 	return result
 }
@@ -339,7 +366,14 @@ func truncateForLog(s string, max int) string {
 //   - 禁用自动重定向：3xx 直接归类为 redirect_blocked
 //   - 响应体读取上限：DefaultMaxResponseBytes (10 MB)
 //   - 并发上限：与 Probe 共享同一 semaphore
-func (p *InlineProber) ProbeConfig(ctx context.Context, cfg config.ServiceConfig) *Result {
+func (p *InlineProber) ProbeConfig(ctx context.Context, cfg config.ServiceConfig, opts ...ProbeOption) *Result {
+	var probeOpts probeOptions
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&probeOpts)
+		}
+	}
+
 	result := &Result{
 		ProbeID:     "probe-" + uuid.New().String(),
 		ProbeStatus: 0,
@@ -380,7 +414,7 @@ func (p *InlineProber) ProbeConfig(ctx context.Context, cfg config.ServiceConfig
 	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	pr := p.prober.probe(probeCtx, &cfg)
+	pr := p.prober.probe(probeCtx, &cfg, probeOpts.captureCurl)
 	if pr == nil {
 		result.SubStatus = "internal_error"
 		result.ErrorMessage = "探测器返回空结果"
@@ -392,8 +426,11 @@ func (p *InlineProber) ProbeConfig(ctx context.Context, cfg config.ServiceConfig
 	result.HTTPCode = pr.HTTPCode
 	result.Latency = pr.Latency
 	result.ResponseSnippet = pr.ResponseSnippet
+	result.Curl = pr.CurlCommand
 	if pr.Err != nil {
-		result.ErrorMessage = pr.Err.Error()
+		// 传输层错误（*url.Error）会带完整请求 URL，URL 内嵌 key 的模板会泄漏密钥；
+		// 在写入响应/日志前统一脱敏。
+		result.ErrorMessage = redactSecrets(pr.Err.Error(), secretVariants(cfg.APIKey))
 	}
 	return result
 }

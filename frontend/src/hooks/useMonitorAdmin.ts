@@ -17,6 +17,8 @@ export interface ProbeResult {
   latency: number;
   errorMessage: string;
   responseSnippet: string;
+  /** 本次实际请求对应的可复制 curl 命令（默认脱敏，密钥用 $RP_API_KEY 占位）。 */
+  curl: string;
 }
 
 export function useMonitorAdmin(token: string) {
@@ -197,6 +199,7 @@ export function useMonitorAdmin(token: string) {
         latency: number;
         error_message: string;
         response_snippet: string;
+        curl?: string;
       }>(
         `/api/admin/monitors/${key}/probe`,
         overrides ?? {},
@@ -210,6 +213,7 @@ export function useMonitorAdmin(token: string) {
         latency: resp.latency,
         errorMessage: resp.error_message,
         responseSnippet: resp.response_snippet,
+        curl: resp.curl ?? '',
       };
       setProbeResult(result);
       return result;

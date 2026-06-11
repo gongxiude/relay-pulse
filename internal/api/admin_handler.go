@@ -14,6 +14,7 @@ import (
 	"monitor/internal/config"
 	"monitor/internal/logger"
 	"monitor/internal/onboarding"
+	"monitor/internal/probe"
 )
 
 // buildLikePattern 把用户输入转成可安全用于 SQL LIKE 的模式串。
@@ -312,7 +313,7 @@ func (h *Handler) AdminTestSubmission(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
 
-	result := h.inlineProber.ProbeConfig(ctx, cfg)
+	result := h.inlineProber.ProbeConfig(ctx, cfg, probe.WithCurlCapture())
 
 	c.JSON(http.StatusOK, gin.H{
 		"probe_status":     result.ProbeStatus,
@@ -322,5 +323,6 @@ func (h *Handler) AdminTestSubmission(c *gin.Context) {
 		"error_message":    result.ErrorMessage,
 		"response_snippet": result.ResponseSnippet,
 		"probe_id":         result.ProbeID,
+		"curl":             result.Curl,
 	})
 }

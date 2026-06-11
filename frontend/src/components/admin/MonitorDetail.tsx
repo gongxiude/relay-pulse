@@ -4,6 +4,7 @@ import { Eye, EyeOff, Copy, Check } from 'lucide-react';
 import type { MonitorConfig, MonitorFile, ProbeHistoryEntry } from '../../types/monitor';
 import type { ProbeResult } from '../../hooks/useMonitorAdmin';
 import { MonitorLogsTab } from './MonitorLogsTab';
+import { CurlCommandBlock } from './CurlCommandBlock';
 
 type DetailTab = 'detail' | 'logs';
 
@@ -671,6 +672,10 @@ export function MonitorDetail({
             {probeResult.responseSnippet}
           </pre>
         </div>
+      )}
+
+      {probeResult && !templateDirty && probeResult.curl && (
+        <CurlCommandBlock curl={probeResult.curl} apiKey={editFields.api_key} />
       )}
       </>
       )}

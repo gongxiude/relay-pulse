@@ -81,6 +81,8 @@ export interface OnboardingTestResult {
   error_message?: string;
   response_snippet?: string;
   probe_id: string;
+  /** 本次实际请求对应的可复制 curl 命令（默认脱敏，密钥用 $RP_API_KEY 占位）。仅 admin 测试下发。 */
+  curl?: string;
   test_proof?: string;
   /** proof 绝对过期时间（Unix 秒），由后端按真实 proof_ttl 下发，供前端权威倒计时 */
   proof_expires_at?: number;
