@@ -592,7 +592,7 @@ HTTP 响应
 ├── 2xx + 快速 + 内容匹配 → 🟢 绿色
 ├── 2xx + 慢速 + 内容匹配 → 🟡 波动 (slow_latency)
 ├── 2xx + 内容不匹配 → 🔴 不可用 (content_mismatch)  ← 无论快慢
-├── 3xx → 🟢 绿色（重定向）
+├── 3xx → 🔴 不可用 (client_error)  ← client 默认已自动跟随合规重定向，漏到这里的裸 3xx 是畸形重定向，非可用响应
 ├── 400 → 🔴 不可用 (invalid_request)
 ├── 401/403 → 🔴 不可用 (auth_error)
 ├── 429 → 🔴 不可用 (rate_limit)  ← 不做内容校验

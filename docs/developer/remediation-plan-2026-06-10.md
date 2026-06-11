@@ -8,7 +8,7 @@
 
 - ① 用户自助变更白名单移除 `category`/`sponsor_level`（保留管理员白名单）+ 删除随之不可达的 sponsor_level 特判 + 回归测试。
 - ② proof 有效期改后端下发：`apikey.IssueWithExpiry` / `onboarding.IssueProofWithExpiry` / `/api/onboarding/test` 返回 `proof_expires_at`（Unix 秒）；前端提交守卫、倒计时、警告/过期全改用该绝对时间，删除硬编码 15m/12m，警告阈值自适应服务端真实 `proof_ttl`（生命周期最后 20%，至少 30s）。
-- ③ inline 429 `rate_limited`→`rate_limit`（对齐 scheduler/storage）；前端 sub_status 走 `t('subStatus.'+code, code)` 翻译并回退原始码，4 个 locale 补 `redirect_blocked`/`response_too_large`/`concurrency_limited`。**3xx 的 redirect_blocked 红/绿语义本批未动，留作单独产品决策。**
+- ③ inline 429 `rate_limited`→`rate_limit`（对齐 scheduler/storage）；前端 sub_status 走 `t('subStatus.'+code, code)` 翻译并回退原始码，4 个 locale 补 `redirect_blocked`/`response_too_large`/`concurrency_limited`。~~**3xx 的 redirect_blocked 红/绿语义本批未动，留作单独产品决策。**~~ **已决策并实现（v2.42.1 / commit 253c0fe）**：调度器 3xx 由判绿改判红——client 默认自动跟随合规重定向，漏到 `determineStatus` 的裸 3xx 是畸形重定向、非可用响应，归 `client_error` 桶（而非新增 `redirect_blocked` 聚合桶——`subStatus.redirect_blocked` 的 i18n 标签虽已存在，但 `StatusCounts` 聚合无此桶，零频边角不值得穿透），与 inline `redirect_blocked` 口径一致。
 - ④ `/api/change/auth` 复用 `probeLimiter`（main.go 无条件初始化）做 IP 限流。
 - ⑤ **额外修复 finding C**：`normalizeOnboardingConfig` 守卫改为 `!Onboarding.Enabled && !ChangeRequests.Enabled`，修复「仅启用 change_requests 时 ProofTTLDuration 留零值→proof 即刻过期」的潜伏 bug + 新增 `onboarding_normalize_test.go`。
 
