@@ -203,8 +203,10 @@ interface StatusTableProps {
 //   3 条线靠近 → "所有 model 表现接近"（共识）
 //   分散      → "各 model 差异大"（需点进详情看哪个掉了）
 //   缺点      → 不补 0；缺一个点的 model 只画 dot/短线
-//   灰色空心 marker → rpdiag 判该 model 当前硬失败故障态；置底表示测不了 /
-//                      无质量数据，不表示"质量 0 分"，tooltip 出故障原因
+//   灰点/灰线 → rpdiag 判该 model 当前硬失败故障态；灰点贴底+中性灰表示「测不了 /
+//                无质量数据」，区别于 qualityScoreColor 的红=测到响应但质量真差。
+//                无任何历史的纯故障 model 画成 5 个灰点贴底的整条灰线；曾有真实分的
+//                则彩色折线在末段渐变落到灰点。tooltip 出 availability_warning
 function QualityScoreCell({ score, compact = false }: { score?: RpdiagScore; compact?: boolean }) {
   // Unique base for the per-series SVG gradient ids. SVG <defs> ids are
   // document-global, so every cell needs its own namespace; `useId` must run
@@ -247,8 +249,15 @@ function QualityScoreCell({ score, compact = false }: { score?: RpdiagScore; com
   //   score 80-100 → 顶部 60%（实际业务关心的"好通道"区域）
   // 跨 row 仍可比（同分数 → 同高度），但读 sparkline 时要意识到刻度不是匀速的。
   // 用 qualityScoreYNorm 计算。绝对分数由 dot 颜色 + tooltip 数字双重提供。
-  type SparkPoint = { x: number; y: number; value: number };
+  type SparkNode = { x: number; y: number; color: string };
   type SparkStop = { offset: number; color: string };
+
+  // 把 (slot, 分数) 映射成一个着色节点：x 取槽位中心，y 走 qualityScoreYNorm
+  // 非线性轴，color 由调用方决定（真实分用 qualityScoreColor，不可用用灰）。
+  const nodeAt = (slot: number, value: number, color: string): SparkNode => {
+    const norm = qualityScoreYNorm(Math.max(0, Math.min(100, value)));
+    return { x: STEP / 2 + slot * STEP, y: H - PAD - norm * (H - 2 * PAD), color };
+  };
 
   const series = ranked
     .map((m) => {
@@ -278,43 +287,51 @@ function QualityScoreCell({ score, compact = false }: { score?: RpdiagScore; com
       const present = slotValues
         .map((v, slot) => (typeof v === 'number' ? { value: v, slot } : null))
         .filter((p): p is { value: number; slot: number } => p !== null);
-      if (present.length === 0) return null;
-      const points: SparkPoint[] = present.map(({ value, slot }) => {
-        const clamped = Math.max(0, Math.min(100, value));
-        const norm = qualityScoreYNorm(clamped);
-        const x = STEP / 2 + slot * STEP;
-        const y = H - PAD - norm * (H - 2 * PAD);
-        return { x, y, value: clamped };
-      });
 
-      // client.go 的 normalizeHardFailTrend 把硬失败的合成 0 放在最右槽位。把它
-      // 从彩色质量线里拆出来：彩色线/圆点只表达真实分数，合成点单独画成灰色不可用
-      // marker（仍置底，但不参与渐变着色，不再被读成"质量 0 分"的红点）。
+      // client.go 的 normalizeHardFailTrend 给硬失败行在最右槽位塞一个合成 0 标记
+      // "当前不可用"。该终点（以及完全无质量历史的 model）一律画中性灰、绝不用
+      // qualityScoreColor(0) 的红——灰=测不了、红=测到响应但质量真差。
       const failed = m.failed === true;
-      const failPoint = failed ? points[points.length - 1] : null;
-      const realPoints = failed ? points.slice(0, -1) : points;
+      let nodes: SparkNode[];
+      if (failed) {
+        const real = present.slice(0, -1);
+        if (real.length === 0) {
+          // 没有任何历史分可锚定：画一条贯穿 5 槽位、贴底的整条灰线，让不可用
+          // model 读成一条清晰的"什么都没测到"折线，而不是孤零零一个灰点。
+          nodes = Array.from({ length: NUM_SLOTS }, (_, slot) =>
+            nodeAt(slot, 0, UNAVAILABLE_COLOR),
+          );
+        } else {
+          // 真实样本各自按分着色；末尾的失败点贴底画灰。于是连接线最后一段从上一个
+          // 真实点的分色渐变落到灰——即"刚刚掉到不可用"的彩→灰过渡。
+          const failSlot = present[present.length - 1].slot;
+          nodes = [
+            ...real.map(({ value, slot }) =>
+              nodeAt(slot, value, qualityScoreColor(value)),
+            ),
+            nodeAt(failSlot, 0, UNAVAILABLE_COLOR),
+          ];
+        }
+      } else {
+        if (present.length === 0) return null;
+        nodes = present.map(({ value, slot }) =>
+          nodeAt(slot, value, qualityScoreColor(value)),
+        );
+      }
 
-      // 连接线按"相邻两点逐段渐变"着色：每个真实点贡献一个 gradient stop，stop 的
-      // offset 取该点在 x 轴上的归一化位置（realPoints 按 slot 左→右单调递增），color
-      // 取该点自身分色。于是线在每个顶点处正好等于该顶点的圆点色，相邻 stop 之间
-      // 就是那一段的两点渐变——线完全贴合圆点，而非整条首→末两色过渡。
-      const x0 = realPoints[0]?.x ?? 0;
-      const span =
-        realPoints.length > 1 ? realPoints[realPoints.length - 1].x - x0 || 1 : 1;
-      const stops: SparkStop[] = realPoints.map((p) => ({
-        offset: (p.x - x0) / span,
-        color: qualityScoreColor(p.value),
+      // 每个节点一个 gradient stop（offset = 其归一化 x）。相邻 stop 之间正好覆盖
+      // 该段，于是线在每个顶点处=该顶点自身色、每段是其两端点的渐变——包含刚掉到
+      // 不可用那条 model 的彩→灰末段。节点沿 x 单调递增保证 offset 单调。
+      const x0 = nodes[0].x;
+      const span = nodes.length > 1 ? nodes[nodes.length - 1].x - x0 || 1 : 1;
+      const stops: SparkStop[] = nodes.map((n) => ({
+        offset: (n.x - x0) / span,
+        color: n.color,
       }));
-      return { points: realPoints, failPoint, stops };
+      return { nodes, stops };
     })
     .filter(
-      (
-        s,
-      ): s is {
-        points: SparkPoint[];
-        failPoint: SparkPoint | null;
-        stops: SparkStop[];
-      } => s !== null,
+      (s): s is { nodes: SparkNode[]; stops: SparkStop[] } => s !== null,
     );
 
   if (series.length === 0) {
@@ -332,20 +349,21 @@ function QualityScoreCell({ score, compact = false }: { score?: RpdiagScore; com
       >
         <defs>
           {series.map((s, i) =>
-            s.points.length > 1 ? (
-              // Gradient axis runs horizontally from the first point's x to the
-              // last point's x; userSpaceOnUse keeps the color a pure function of
+            s.nodes.length > 1 ? (
+              // Gradient axis runs horizontally from the first node's x to the
+              // last node's x; userSpaceOnUse keeps the colour a pure function of
               // x, independent of the polyline's vertical zig-zag. One stop per
-              // point (offset = that point's normalized x) makes each adjacent
+              // node (offset = that node's normalized x) makes each adjacent
               // pair of stops interpolate over exactly its segment — so the line
-              // hits every vertex's own score color, matching the dots.
+              // hits every node's own colour (score colour, or grey for an
+              // unavailable endpoint), matching the dots.
               <linearGradient
                 key={i}
                 id={`${gradientBaseId}-${i}`}
                 gradientUnits="userSpaceOnUse"
-                x1={s.points[0].x}
+                x1={s.nodes[0].x}
                 y1="0"
-                x2={s.points[s.points.length - 1].x}
+                x2={s.nodes[s.nodes.length - 1].x}
                 y2="0"
               >
                 {s.stops.map((st, k) => (
@@ -367,52 +385,24 @@ function QualityScoreCell({ score, compact = false }: { score?: RpdiagScore; com
             strokeDasharray="2 2"
           />
         ))}
-        {series.map((s, i) => {
-          // 灰虚线从最后一个真实点引到 floor 的不可用 marker，表达"掉到不可用"；
-          // 没有真实点（从无质量分的硬失败）时只画灰空心 marker，不画任何线。
-          const lastRealPoint = s.points[s.points.length - 1];
-          return (
-            <g key={i}>
-              {s.points.length > 1 && (
-                <polyline
-                  points={s.points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')}
-                  fill="none"
-                  stroke={`url(#${gradientBaseId}-${i})`}
-                  strokeWidth={STROKE_W}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  opacity="0.85"
-                />
-              )}
-              {s.failPoint && lastRealPoint && (
-                <line
-                  x1={lastRealPoint.x}
-                  y1={lastRealPoint.y}
-                  x2={s.failPoint.x}
-                  y2={s.failPoint.y}
-                  stroke={UNAVAILABLE_COLOR}
-                  strokeWidth={STROKE_W}
-                  strokeLinecap="round"
-                  strokeDasharray="2 2"
-                  opacity="0.85"
-                />
-              )}
-              {s.points.map((p, j) => (
-                <circle key={j} cx={p.x} cy={p.y} r={DOT_R} fill={qualityScoreColor(p.value)} />
-              ))}
-              {s.failPoint && (
-                <circle
-                  cx={s.failPoint.x}
-                  cy={s.failPoint.y}
-                  r={DOT_R}
-                  fill="none"
-                  stroke={UNAVAILABLE_COLOR}
-                  strokeWidth={STROKE_W}
-                />
-              )}
-            </g>
-          );
-        })}
+        {series.map((s, i) => (
+          <g key={i}>
+            {s.nodes.length > 1 && (
+              <polyline
+                points={s.nodes.map((n) => `${n.x.toFixed(1)},${n.y.toFixed(1)}`).join(' ')}
+                fill="none"
+                stroke={`url(#${gradientBaseId}-${i})`}
+                strokeWidth={STROKE_W}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                opacity="0.85"
+              />
+            )}
+            {s.nodes.map((n, j) => (
+              <circle key={j} cx={n.x} cy={n.y} r={DOT_R} fill={n.color} />
+            ))}
+          </g>
+        ))}
       </svg>
     </span>
   );

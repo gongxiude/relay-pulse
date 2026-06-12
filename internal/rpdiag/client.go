@@ -304,10 +304,12 @@ func latestFingerprintSample(t ScoreTrend) *float64 {
 
 // normalizeHardFailTrend returns a display-only ScoreTrend for a row rpdiag has
 // flagged as currently hard-fail active. The representative point is forced to
-// 0 — rendered as a red bottom dot by the existing colour/Y scale, no new
-// visual state — while the historical window averages are kept so the
-// sparkline reads as "dropped from high to 0". The synthetic 0 has no real
-// sample timestamp, so LatestAt is cleared.
+// 0 and tagged via ModelScore.Failed; the front end renders that endpoint in a
+// neutral unavailable grey at the floor (grey = couldn't measure, distinct from
+// the red qualityScoreColor uses for a genuinely poor measured response). The
+// historical window averages are kept so the sparkline reads as "dropped from
+// high to unavailable". The synthetic 0 has no real sample timestamp, so
+// LatestAt is cleared.
 //
 // RecentScores is rebuilt into a fresh slice (last up-to-2 real samples, then
 // the synthetic 0; just [0] when there is no history). It never aliases the
