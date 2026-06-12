@@ -279,15 +279,25 @@ function QualityScoreCell({ score, compact = false }: { score?: RpdiagScore; com
         const y = H - PAD - norm * (H - 2 * PAD);
         return { x, y, value: clamped };
       });
-      // 连接线按"起点分 → 终点分"渐变着色：points 已按 slot（旧→新，左→右）升序，
-      // 所以首点是最早样本、末点是最新样本。圆点仍各自按自身分着色（见下）。
-      const startColor = qualityScoreColor(points[0].value);
-      const endColor = qualityScoreColor(points[points.length - 1].value);
-      return { points, startColor, endColor };
+      // 连接线按"相邻两点逐段渐变"着色：每个点贡献一个 gradient stop，stop 的
+      // offset 取该点在 x 轴上的归一化位置（points 按 slot 左→右单调递增），color
+      // 取该点自身分色。于是线在每个顶点处正好等于该顶点的圆点色，相邻 stop 之间
+      // 就是那一段的两点渐变——线完全贴合圆点，而非整条首→末两色过渡。
+      const x0 = points[0].x;
+      const span = points[points.length - 1].x - x0 || 1;
+      const stops = points.map((p) => ({
+        offset: (p.x - x0) / span,
+        color: qualityScoreColor(p.value),
+      }));
+      return { points, stops };
     })
     .filter(
-      (s): s is { points: { x: number; y: number; value: number }[]; startColor: string; endColor: string } =>
-        s !== null,
+      (
+        s,
+      ): s is {
+        points: { x: number; y: number; value: number }[];
+        stops: { offset: number; color: string }[];
+      } => s !== null,
     );
 
   if (series.length === 0) {
@@ -306,10 +316,12 @@ function QualityScoreCell({ score, compact = false }: { score?: RpdiagScore; com
         <defs>
           {series.map((s, i) =>
             s.points.length > 1 ? (
-              // Gradient axis runs horizontally from the first point's x (oldest
-              // sample) to the last point's x (newest), so offset 0 = 起点分色、
-              // offset 1 = 终点分色。userSpaceOnUse keeps it purely a function of
-              // x, independent of the polyline's vertical zig-zag.
+              // Gradient axis runs horizontally from the first point's x to the
+              // last point's x; userSpaceOnUse keeps the color a pure function of
+              // x, independent of the polyline's vertical zig-zag. One stop per
+              // point (offset = that point's normalized x) makes each adjacent
+              // pair of stops interpolate over exactly its segment — so the line
+              // hits every vertex's own score color, matching the dots.
               <linearGradient
                 key={i}
                 id={`${gradientBaseId}-${i}`}
@@ -319,8 +331,9 @@ function QualityScoreCell({ score, compact = false }: { score?: RpdiagScore; com
                 x2={s.points[s.points.length - 1].x}
                 y2="0"
               >
-                <stop offset="0" stopColor={s.startColor} />
-                <stop offset="1" stopColor={s.endColor} />
+                {s.stops.map((st, k) => (
+                  <stop key={k} offset={st.offset} stopColor={st.color} />
+                ))}
               </linearGradient>
             ) : null,
           )}
