@@ -457,8 +457,11 @@ func maskProxyURLInMessage(msg, raw string) string {
 // 这些都是调用方的责任。返回值与 Probe 完全同构（携带 probe_id，可与日志/审计串联）。
 //
 // 仍保留的安全限制（继承自底层 internalProber + safe HTTP client）：
-//   - SSRF 守卫：私网/回环/链路本地 IP 阻断
-//   - 禁用代理：忽略 cfg.Proxy 与环境代理变量
+//   - SSRF 守卫：私网/回环/链路本地 IP 阻断（默认 safe client；走代理时由代理负责
+//     上游解析/连接，该上游 IP 校验天然失效，见 newProxyHTTPClient 说明）
+//   - 代理：默认直连、忽略 cfg.Proxy 与环境代理变量；**仅当**调用方显式传入
+//     WithProxy(proxyURL) 时（只有管理员通道管理探测会传）才经该代理，复用 scheduler
+//     的 http/socks5 语义。公开 onboarding/change 自测不传，绝不走代理。
 //   - 禁用自动重定向：3xx 直接归类为 redirect_blocked
 //   - 响应体读取上限：DefaultMaxResponseBytes (10 MB)
 //   - 并发上限：与 Probe 共享同一 semaphore
