@@ -3,10 +3,13 @@ package probe
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -115,7 +118,9 @@ func (p *internalProber) probe(ctx context.Context, cfg *config.ServiceConfig, c
 
 	body, err := readBodyLimited(resp.Body, p.maxBodyBytes)
 	if err != nil {
-		result.SubStatus = "response_too_large"
+		// 区分读 body 失败的真实原因，避免把"读取超时/连接中断"误标成"响应体过大"
+		// （response_timeout 语义：HTTP 头已回但读响应体超时，常见于流式响应经代理变慢）。
+		result.SubStatus = bodyReadSubStatus(err)
 		result.Err = err
 		return result
 	}
@@ -146,6 +151,10 @@ func (p *internalProber) probe(ctx context.Context, cfg *config.ServiceConfig, c
 	return result
 }
 
+// errResponseTooLarge 标记"响应体超过上限"这一**特定**失败，与读取过程中的 I/O
+// 错误（超时/连接中断）区分开，供 bodyReadSubStatus 精确归类。
+var errResponseTooLarge = errors.New("响应体超过上限")
+
 func readBodyLimited(r io.Reader, limit int64) ([]byte, error) {
 	if limit <= 0 {
 		limit = DefaultMaxResponseBytes
@@ -155,9 +164,34 @@ func readBodyLimited(r io.Reader, limit int64) ([]byte, error) {
 		return data, err
 	}
 	if int64(len(data)) > limit {
-		return data[:limit], fmt.Errorf("响应体超过上限 %d bytes", limit)
+		return data[:limit], fmt.Errorf("%w（%d bytes）", errResponseTooLarge, limit)
 	}
 	return data, nil
+}
+
+// bodyReadSubStatus 把读响应体失败归类到正确的细分状态：
+//   - 真正超过大小上限 → response_too_large
+//   - 读取超时（context deadline / net 超时 / read deadline）→ response_timeout
+//     （HTTP 头已回但读 body 超时，常见于流式响应经代理变慢）
+//   - 其余读取中断（连接重置、EOF 等）→ network_error
+func bodyReadSubStatus(err error) string {
+	switch {
+	case errors.Is(err, errResponseTooLarge):
+		return "response_too_large"
+	case isTimeoutError(err):
+		return "response_timeout"
+	default:
+		return "network_error"
+	}
+}
+
+// isTimeoutError 判定错误是否为超时类（context 截止、net.Error.Timeout、read deadline）。
+func isTimeoutError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 func classifyHTTPStatus(statusCode, latency int, slowLatency time.Duration) (int, string) {
