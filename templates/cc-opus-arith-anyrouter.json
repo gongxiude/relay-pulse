@@ -1,13 +1,25 @@
 {
 	"model": "Opus",
-	"request_model": "claude-opus-4-7",
+	"request_model": "claude-opus-4-8",
 	"url": "{{BASE_URL}}/v1/messages",
 	"method": "POST",
+	"_comment": "AnyRouter 对 opus 做 Claude Code 客户端指纹 WAF：缺指纹一律返回 503/520 'Service Unavailable'（haiku 不校验、裸请求即通）。放行需同时满足：(1) anthropic-beta 含 context-1m-2025-08-07，否则 400 '请启用 1m 上下文'；(2) system 含 SDK 身份串（见 body.system[0]）；(3) metadata.user_id 非平凡（{{USER_ID}} 的 user_..._account__session_... 格式即可）；(4) 完整 SDK 头集（User-Agent claude-cli + x-app + anthropic-dangerous-direct-browser-access + X-Stainless-* 家族），否则精简头会被 ESA 边缘拦成 520。以下头按真实 claude-cli 抓包还原，2026-06-13 实测 opus-4-8 端到端 200。",
 	"headers": {
 		"x-api-key": "{{API_KEY}}",
 		"Content-Type": "application/json",
 		"Anthropic-Version": "2023-06-01",
-		"anthropic-beta": "context-1m-2025-08-07"
+		"anthropic-beta": "claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,context-1m-2025-08-07,advanced-tool-use-2025-11-20,effort-2025-11-24,extended-cache-ttl-2025-04-11",
+		"anthropic-dangerous-direct-browser-access": "true",
+		"User-Agent": "claude-cli/2.1.170 (external, sdk-cli)",
+		"x-app": "cli",
+		"X-Stainless-Arch": "x64",
+		"X-Stainless-Lang": "js",
+		"X-Stainless-OS": "Linux",
+		"X-Stainless-Package-Version": "0.94.0",
+		"X-Stainless-Runtime": "node",
+		"X-Stainless-Runtime-Version": "v24.3.0",
+		"X-Stainless-Retry-Count": "0",
+		"X-Stainless-Timeout": "600"
 	},
 	"body": {
 		"model": "{{MODEL}}",
