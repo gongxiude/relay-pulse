@@ -96,6 +96,7 @@ export function useAdmin() {
 
   // Auto-fetch on filter/page change
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 鉴权/筛选变更即取数：fetchList 在 await 前同步置 loading/清错误为有意
     if (isAuthenticated) fetchList();
   }, [isAuthenticated, fetchList]);
 

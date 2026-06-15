@@ -47,6 +47,27 @@ interface AnnouncementsState {
   dismissedAt: string | null;
 }
 
+// 从 localStorage 加载状态。纯函数（只读模块级 STORAGE_KEY），置于组件外避免
+// 在 useState 初始化器中先用后声明（react-hooks/immutability）。
+function loadState(): AnnouncementsState {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      return {
+        dismissedUntilVersion: parsed.dismissedUntilVersion || null,
+        dismissedAt: parsed.dismissedAt || null,
+      };
+    }
+  } catch {
+    // ignore
+  }
+  return {
+    dismissedUntilVersion: null,
+    dismissedAt: null,
+  };
+}
+
 // Hook 返回类型
 export interface UseAnnouncementsReturn {
   // 数据
@@ -81,26 +102,6 @@ export function useAnnouncements(enabled: boolean = true): UseAnnouncementsRetur
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const pollingRef = useRef<number | null>(null);
-
-  // 从 localStorage 加载状态
-  function loadState(): AnnouncementsState {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        return {
-          dismissedUntilVersion: parsed.dismissedUntilVersion || null,
-          dismissedAt: parsed.dismissedAt || null,
-        };
-      }
-    } catch {
-      // ignore
-    }
-    return {
-      dismissedUntilVersion: null,
-      dismissedAt: null,
-    };
-  }
 
   // 保存状态到 localStorage
   function saveState(newState: AnnouncementsState) {
@@ -191,6 +192,7 @@ export function useAnnouncements(enabled: boolean = true): UseAnnouncementsRetur
   // 初始加载和轮询（enabled=false 时跳过，用于截图模式等场景）
   useEffect(() => {
     if (!enabled) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 禁用态收尾置 loading=false 为有意（截图模式跳过请求）
       setLoading(false);
       return;
     }

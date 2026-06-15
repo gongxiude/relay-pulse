@@ -194,7 +194,8 @@ export function useFavorites(): UseFavoritesReturn {
 
     // 首次渲染时，如果需要清理则写入
     // 后续渲染时，正常写入
-    let hasExistingData = false;
+    // 不预置初值：成功分支会在读取前赋值，catch 分支 return，初值恒被覆盖（no-useless-assignment）。
+    let hasExistingData: boolean;
     try {
       hasExistingData = localStorage.getItem(STORAGE_KEY) !== null;
     } catch {

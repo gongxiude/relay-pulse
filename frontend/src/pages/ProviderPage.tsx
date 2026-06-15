@@ -144,12 +144,12 @@ export default function ProviderPage() {
   });
 
   // 运行时隐藏价格列后，若本地 sortConfig 还停留在 priceRatio，
-  // 则退回默认排序，避免 UI 上"按隐藏列排序"的语义错位（局部状态，无 URL 干扰）
-  useEffect(() => {
-    if (hidePriceColumn && sortConfig.key === 'priceRatio') {
-      setSortConfig({ key: 'uptime', direction: 'desc' });
-    }
-  }, [hidePriceColumn, sortConfig.key]);
+  // 则退回默认排序，避免 UI 上"按隐藏列排序"的语义错位（局部状态，无 URL 干扰）。
+  // 渲染期条件 setState（非 effect）：纠偏后 sortConfig.key 变 uptime，下一轮条件即假、自然收敛，
+  // 不会级联循环（React 官方"渲染期调整 state"配方，比 effect 少一次提交后重渲染）。
+  if (hidePriceColumn && sortConfig.key === 'priceRatio') {
+    setSortConfig({ key: 'uptime', direction: 'desc' });
+  }
 
   // 板块功能禁用时，自动归一 board 到 hot
   // 解决：用户手动输入 ?board=cold 但功能未启用时的 URL 混乱问题

@@ -101,9 +101,16 @@ export const SubmissionDetail: React.FC<SubmissionDetailProps> = ({
 }) => {
   const { t } = useTranslation();
 
-  // 本地编辑 draft — submission 变化时重置
+  // 本地编辑 draft — submission 变化时重置（含保存后用持久化值回填、清 dirty）。
+  // 渲染期 identity 守卫替代 effect：复刻原 [submission] 引用触发语义（保存后 AdminPage
+  // 传入同 public_id 的新对象 → 引用变 → 重置），少一次首渲染无谓 reset，且规避
+  // set-state-in-effect 的级联渲染（React 官方"渲染期调整 state"配方）。
   const [draft, setDraft] = useState<Draft>(() => pickDraft(submission));
-  useEffect(() => { setDraft(pickDraft(submission)); }, [submission]);
+  const [syncedFrom, setSyncedFrom] = useState(submission);
+  if (syncedFrom !== submission) {
+    setSyncedFrom(submission);
+    setDraft(pickDraft(submission));
+  }
 
   const dirty = hasDraftChanged(draft, submission);
   const [isSaving, setIsSaving] = useState(false);
@@ -117,6 +124,7 @@ export const SubmissionDetail: React.FC<SubmissionDetailProps> = ({
 
   useEffect(() => {
     if (!serviceType) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 无 service_type 时同步重置模板态为有意（非派生 state）
       setTemplates([]);
       setTemplatesError(null);
       setIsTemplatesLoading(false);

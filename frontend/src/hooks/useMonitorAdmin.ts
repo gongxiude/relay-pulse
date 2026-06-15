@@ -43,6 +43,14 @@ export function useMonitorAdmin(token: string) {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [probeTargets, setProbeTargets] = useState<ProbeTarget[]>([]);
 
+  // Probe：父通道与各子通道可独立探测，状态按 target key 分桶（key=target model，
+  // 父通道用 PARENT_TARGET_KEY=''），避免多按钮互相覆盖结果。
+  // 声明须置于 fetchDetail 之上——后者切换详情时会清空这些桶，先用后声明会触发
+  // react-hooks/immutability（"Cannot access variable before it is declared"）。
+  const [probingTargets, setProbingTargets] = useState<Record<string, boolean>>({});
+  const [probeResults, setProbeResults] = useState<Record<string, ProbeResult>>({});
+  const [probeErrors, setProbeErrors] = useState<Record<string, string>>({});
+
   const authHeaders = useCallback((): HeadersInit => ({
     Authorization: `Bearer ${token}`,
   }), [token]);
@@ -74,6 +82,7 @@ export function useMonitorAdmin(token: string) {
   }, [token, boardFilter, statusFilter, searchQuery, authHeaders]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 挂载即取数：fetchList 在 await 前同步置 loading/清错误为有意，非派生 state
     if (token) fetchList();
   }, [token, fetchList]);
 
@@ -188,12 +197,6 @@ export function useMonitorAdmin(token: string) {
       setError(e instanceof ApiError ? e.message : '切换失败');
     }
   }, [token, authHeaders, fetchList]);
-
-  // Probe：父通道与各子通道可独立探测，状态按 target key 分桶（key=target model，
-  // 父通道用 PARENT_TARGET_KEY=''），避免多按钮互相覆盖结果。
-  const [probingTargets, setProbingTargets] = useState<Record<string, boolean>>({});
-  const [probeResults, setProbeResults] = useState<Record<string, ProbeResult>>({});
-  const [probeErrors, setProbeErrors] = useState<Record<string, string>>({});
 
   const probeMonitor = useCallback(async (
     key: string,

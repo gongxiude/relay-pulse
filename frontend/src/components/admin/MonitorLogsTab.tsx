@@ -63,7 +63,10 @@ export function MonitorLogsTab({ monitorKey, monitorFile, fetchLogs }: MonitorLo
     }
   }, [fetchLogs, monitorKey, since, modelFilter, t]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 挂载/筛选变更即取数：load 在 await 前同步置 loading/清错误为有意
+    load();
+  }, [load]);
 
   return (
     <div className="space-y-4">

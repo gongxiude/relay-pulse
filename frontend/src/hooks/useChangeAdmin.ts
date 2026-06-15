@@ -36,6 +36,7 @@ export function useChangeAdmin(token: string) {
   }, [token, statusFilter, headers]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 挂载/筛选变更即取数：fetchList 在 await 前同步置 loading/清错误为有意
     fetchList();
   }, [fetchList]);
 
