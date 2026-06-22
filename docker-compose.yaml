@@ -4,35 +4,34 @@ services:
   # 方式一：使用 SQLite (默认，单机部署)
   # ============================================
   monitor:
-    # 使用预构建镜像（生产环境推荐）
-    # image: ghcr.io/prehisle/relay-pulse:latest
+    # 使用预构建镜像（默认，开箱即用：curl 下载本文件后即可 docker compose up，无需克隆源码）
+    image: ghcr.io/prehisle/relay-pulse:latest
 
-    # 本地构建（开发环境，支持 ARM64/AMD64）
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        VERSION: ${MONITOR_VERSION:-dev}
-        GIT_COMMIT: ${MONITOR_GIT_COMMIT:-unknown}
-        BUILD_TIME: ${MONITOR_BUILD_TIME:-unknown}
-        # 构建期隐藏公开列表/卡片中的"价格 ¥/$"列（值为 true 时隐藏，默认显示）
-        VITE_HIDE_PRICE_COLUMN: ${VITE_HIDE_PRICE_COLUMN:-}
+    # 本地构建（开发模式，需先克隆仓库源码）：注释上面的 image 行，并取消下面 build 块的注释
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    #   args:
+    #     VERSION: ${MONITOR_VERSION:-dev}
+    #     GIT_COMMIT: ${MONITOR_GIT_COMMIT:-unknown}
+    #     BUILD_TIME: ${MONITOR_BUILD_TIME:-unknown}
+    #     # 构建期隐藏公开列表/卡片中的"价格 ¥/$"列（值为 true 时隐藏，默认显示）
+    #     VITE_HIDE_PRICE_COLUMN: ${VITE_HIDE_PRICE_COLUMN:-}
 
     container_name: relaypulse-monitor
 
-    # 端口映射
-    # 生产环境：80:8080（通过 Cloudflare CDN 访问）
-    # 开发环境：8080:8080（本地直接访问）
+    # 端口映射（默认 8080，与下方"访问服务"说明及 README 一致）
+    # 如需用 80 端口对外（例如配 Cloudflare CDN），改为 "80:8080"（绑特权端口需 root）
     ports:
-      - "80:8080"
+      - "8080:8080"
 
     # 挂载配置文件和数据目录
     volumes:
       # 配置目录（必需，目录挂载支持热更新）
       - ./config:/config
-      # 模板目录（⚠️ 使用预构建镜像时必需，本地构建时可选）
-      # 如果使用 ghcr.io 预构建镜像，必须取消注释下行:
-      - ./templates:/app/templates:ro
+      # 模板目录：模板 JSON 已内置镜像（/app/templates），容器启动会自动软链到 /config/templates，默认无需挂载。
+      # 仅当要自定义模板内容时（需先克隆仓库、本地有 templates/ 目录），取消注释下行:
+      # - ./templates:/app/templates:ro
       # SQLite 数据库持久化（使用独立的 /data 目录，避免覆盖 /app 导致二进制文件不更新）
       - relay-pulse-data:/data
 
@@ -189,7 +188,7 @@ networks:
 #
 # 自定义模板文件（可选）
 # ------------------------------
-# templates 目录包含模板引用的 JSON 文件（如 cc-haiku-arith.json、cx-codex-arith.json）
+# templates 目录包含模板引用的 JSON 文件（如 cc-haiku-arith.json、cx-gpt-arith.json）
 # 默认使用镜像内置的 templates 文件，无需挂载
 #
 # 如需自定义 templates 文件内容:
