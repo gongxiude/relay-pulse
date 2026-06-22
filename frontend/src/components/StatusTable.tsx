@@ -915,7 +915,7 @@ function StatusTableComponent({
           <col className="w-full" /> {/* trend */}
         </colgroup>
         <thead>
-          <tr className="border-b border-default/50 text-secondary text-xs uppercase tracking-wider">
+          <tr className="border-b border-default/50 text-secondary text-[11px] uppercase">
             {/* 注解列 - 仅在有注解时显示 */}
             {hasAnnotations && (
               <th className="px-1 py-3 font-medium whitespace-nowrap">
@@ -925,7 +925,7 @@ function StatusTableComponent({
             {/* 服务商列（合并赞助者） */}
             {showProvider && (
               <th
-                className="px-3 py-3 font-medium whitespace-nowrap cursor-pointer hover:text-accent transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none"
+                className="px-1.5 py-3 font-medium whitespace-nowrap cursor-pointer hover:text-accent transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none"
                 onClick={() => onSort('providerName')}
                 onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onSort('providerName'))}
                 tabIndex={0}
@@ -937,7 +937,7 @@ function StatusTableComponent({
               </th>
             )}
             <th
-              className="px-2 py-3 font-medium whitespace-nowrap cursor-pointer hover:text-accent transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none"
+              className="px-1.5 py-3 font-medium whitespace-nowrap cursor-pointer hover:text-accent transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none"
               onClick={() => onSort('serviceType')}
               onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onSort('serviceType'))}
               tabIndex={0}
@@ -948,7 +948,7 @@ function StatusTableComponent({
               </div>
             </th>
             <th
-              className="px-2 py-3 font-medium whitespace-nowrap cursor-pointer hover:text-accent transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none"
+              className="px-1.5 py-3 font-medium whitespace-nowrap cursor-pointer hover:text-accent transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none"
               onClick={() => onSort('channel')}
               onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onSort('channel'))}
               tabIndex={0}
@@ -958,12 +958,12 @@ function StatusTableComponent({
                 {t('table.headers.channel')} <SortIcon columnKey="channel" />
               </div>
             </th>
-            <th className="px-2 py-3 font-medium whitespace-nowrap">
+            <th className="px-1.5 py-3 font-medium whitespace-nowrap">
               {t('table.headers.model')}
             </th>
             {!hidePriceColumn && (
               <th
-                className="px-2 py-3 font-medium whitespace-nowrap cursor-pointer hover:text-accent transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none"
+                className="px-1.5 py-3 font-medium whitespace-nowrap cursor-pointer hover:text-accent transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none"
                 onClick={() => onSort('priceRatio')}
                 onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onSort('priceRatio'))}
                 tabIndex={0}
@@ -989,7 +989,7 @@ function StatusTableComponent({
               </th>
             )}
             <th
-              className="px-2 py-3 font-medium whitespace-nowrap cursor-pointer hover:text-accent transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none"
+              className="px-1.5 py-3 font-medium whitespace-nowrap cursor-pointer hover:text-accent transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none"
               onClick={() => onSort('listedDays')}
               onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onSort('listedDays'))}
               tabIndex={0}
@@ -1004,7 +1004,7 @@ function StatusTableComponent({
               </div>
             </th>
             <th
-              className="px-2 py-3 font-medium whitespace-nowrap cursor-pointer hover:text-accent transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none"
+              className="px-1.5 py-3 font-medium whitespace-nowrap cursor-pointer hover:text-accent transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none"
               onClick={() => onSort('uptime')}
               onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onSort('uptime'))}
               tabIndex={0}
@@ -1015,7 +1015,7 @@ function StatusTableComponent({
               </div>
             </th>
             <th
-              className="px-2 py-3 font-medium whitespace-nowrap cursor-pointer hover:text-accent transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none"
+              className="px-1.5 py-3 font-medium whitespace-nowrap cursor-pointer hover:text-accent transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none"
               onClick={() => onSort('lastCheck')}
               onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onSort('lastCheck'))}
               tabIndex={0}
@@ -1031,7 +1031,7 @@ function StatusTableComponent({
             </th>
             {/* 质量列表头：rpdiag 加载完成前置灰不响应排序，避免空数据触发的伪排序 */}
             <th
-              className={`px-2 py-3 font-medium whitespace-nowrap focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none ${
+              className={`px-1.5 py-3 font-medium whitespace-nowrap focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none ${
                 rpdiagScoresLoaded
                   ? 'cursor-pointer hover:text-accent transition-colors'
                   : 'text-muted cursor-not-allowed opacity-60'
@@ -1066,7 +1066,7 @@ function StatusTableComponent({
                 {rpdiagScoresLoaded && <SortIcon columnKey="qualityScore" />}
               </div>
             </th>
-            <th className="pl-2 pr-4 py-3 font-medium min-w-[260px]">
+            <th className="pl-1.5 pr-2 py-3 font-medium min-w-[224px]">
               <div className="flex items-center gap-2">
                 {t('table.headers.trend')}
                 <span className="text-[10px] normal-case opacity-50 border border-default px-1 rounded">
@@ -1099,7 +1099,7 @@ function StatusTableComponent({
               )}
               {/* 服务商列（两行紧贴，整体垂直居中） */}
               {showProvider && (
-                <td className="px-2 py-1.5">
+                <td className="px-1.5 py-1.5">
                   <div className="flex items-center h-8 group/provider">
                     <div className="flex flex-col gap-0 flex-1 min-w-0 max-w-[13rem]">
                       <div className="flex items-center gap-1.5">
@@ -1139,7 +1139,7 @@ function StatusTableComponent({
                   </div>
                 </td>
               )}
-              <td className="px-2 py-1">
+              <td className="px-1.5 py-1">
                 <span
                   className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-mono border ${
                     item.serviceType === 'cc'
@@ -1160,7 +1160,7 @@ function StatusTableComponent({
                   {item.serviceName.toUpperCase()}
                 </span>
               </td>
-              <td className="px-2 py-1 text-secondary text-xs">
+              <td className="px-1.5 py-1 text-secondary text-xs">
                 <ChannelCell
                   channel={item.channelName || item.channel}
                   probeUrl={item.probeUrl}
@@ -1169,7 +1169,7 @@ function StatusTableComponent({
                   className="max-w-[10rem]"
                 />
               </td>
-              <td className="px-2 py-1 text-secondary text-xs max-w-[14rem]">
+              <td className="px-1.5 py-1 text-secondary text-xs max-w-[14rem]">
                 {(() => {
                   const models = getModelDisplayList(item.modelEntries);
                   if (models.length === 0) return <span className="text-muted">-</span>;
@@ -1190,7 +1190,7 @@ function StatusTableComponent({
                 })()}
               </td>
               {!hidePriceColumn && (
-                <td className="px-2 py-1 font-mono text-xs whitespace-nowrap">
+                <td className="px-1.5 py-1 font-mono text-xs whitespace-nowrap">
                   {(() => {
                     const priceData = formatPriceRatioStructured(item.priceMin, item.priceMax);
                     if (!priceData) return <span className="text-muted">-</span>;
@@ -1205,15 +1205,15 @@ function StatusTableComponent({
                   })()}
                 </td>
               )}
-              <td className="px-2 py-1 font-mono text-xs text-secondary whitespace-nowrap">
+              <td className="px-1.5 py-1 font-mono text-xs text-secondary whitespace-nowrap">
                 {item.listedDays != null ? `${item.listedDays}d` : '-'}
               </td>
-              <td className="px-2 py-1 font-mono font-bold whitespace-nowrap">
+              <td className="px-1.5 py-1 font-mono font-bold whitespace-nowrap">
                 <span style={{ color: availabilityToColor(item.uptime) }}>
                   {item.uptime >= 0 ? `${item.uptime}%` : '--'}
                 </span>
               </td>
-              <td className="px-2 py-1">
+              <td className="px-1.5 py-1">
                 <div className="flex items-center gap-1.5">
                   <StatusDot status={item.currentStatus} size="sm" />
                   {item.lastCheckTimestamp ? (
@@ -1233,10 +1233,10 @@ function StatusTableComponent({
                   )}
                 </div>
               </td>
-              <td className="px-2 py-1 whitespace-nowrap">
+              <td className="px-1.5 py-1 whitespace-nowrap">
                 <QualityScoreCell score={lookupRpdiagScore(rpdiagScores, item.providerId, item.serviceType, item.channelName || item.channel)} />
               </td>
-              <td className="pl-2 pr-4 py-1.5 align-middle">
+              <td className="pl-1.5 pr-2 py-1.5 align-middle">
                 <div className="flex items-center gap-[2px] h-5 w-full overflow-hidden rounded-sm">
                   {/* 热力图：多层 vs 单层 */}
                   {item.isMultiModel && item.layers ? (
