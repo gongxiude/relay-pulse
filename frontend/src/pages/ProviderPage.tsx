@@ -428,7 +428,7 @@ export default function ProviderPage() {
               {currentSnapshot ? <SnapshotStatusBadge snapshot={currentSnapshot} /> : null}
             </div>
             <p className="mt-3 text-secondary text-base leading-relaxed">
-              当前页按 `new-api` 同步的真实通道展开，展示该服务商在当前渠道下的模型状态、最近检测状态和可用率补充信息。
+              当前页只使用 `new-api` 同步的真实渠道快照。先选中当前要看的通道，再按模型查看启停状态、最近检测状态和可用率趋势。
             </p>
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <span className="text-sm text-secondary">服务视图</span>
@@ -462,6 +462,56 @@ export default function ProviderPage() {
                 </span>
               )}
               <span className="text-xs text-muted">当前同步分组：{currentServiceGroup}</span>
+            </div>
+          </section>
+
+          <section className="mb-4 rounded-2xl border border-default/70 bg-surface/55 px-4 py-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-primary">同步通道</h2>
+                <p className="mt-1 text-sm text-secondary">
+                  下列通道全部来自 `new-api` 同步快照。点击后切换当前详情页的通道视图。
+                </p>
+              </div>
+              <div className="text-xs text-muted">
+                当前类型：{currentSnapshot?.channelTypeLabel || currentSourceMeta?.label || '未知'}
+              </div>
+            </div>
+
+            <div className="grid gap-3 lg:grid-cols-2">
+              {sourceFilteredSnapshots.map((snapshot) => {
+                const active = snapshot.channel === selectedChannel;
+                const modelsCount = splitModels(snapshot.model).length;
+                return (
+                  <button
+                    key={snapshot.channel}
+                    type="button"
+                    onClick={() => updateParam(setSearchParams, searchParams, { channel: snapshot.channel, model: undefined })}
+                    className={`rounded-xl border px-4 py-4 text-left transition ${
+                      active
+                        ? 'border-accent bg-accent/10 shadow-sm'
+                        : 'border-default/70 bg-surface/65 hover:bg-elevated/45'
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <div className="font-medium text-primary">{extractAuditChannelName(snapshot.channel)}</div>
+                        <div className="mt-1 text-xs text-secondary">{snapshot.channel}</div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="inline-flex items-center rounded-full border border-default/70 bg-surface/70 px-2.5 py-1 text-xs text-secondary">
+                          {snapshot.channelTypeLabel || inferSourceKey(snapshot)}
+                        </span>
+                        <SnapshotStatusBadge snapshot={snapshot} compact />
+                      </div>
+                    </div>
+                    <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
+                      <span>模型 {modelsCount}</span>
+                      <span>分组 {snapshot.service || '--'}</span>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </section>
 
@@ -501,12 +551,12 @@ export default function ProviderPage() {
             <div className="mb-3 text-sm font-semibold text-primary">筛选当前详情</div>
             <div className="grid gap-4 md:grid-cols-3">
               <FilterField
-                label="来源"
+                label="通道类型"
                 value={selectedSource}
                 onChange={(value) => updateParam(setSearchParams, searchParams, { source: value === 'all' ? undefined : value, channel: undefined, model: undefined })}
                 options={sourceOptions.map((option) => ({
                   value: option,
-                  label: option === 'all' ? '全部来源' : SOURCE_META[option as Exclude<SourceKey, 'all'>].label,
+                  label: option === 'all' ? '全部类型' : SOURCE_META[option as Exclude<SourceKey, 'all'>].label,
                 }))}
               />
               <FilterField
@@ -543,7 +593,7 @@ export default function ProviderPage() {
               <div>
                 <h2 className="text-lg font-semibold text-primary">模型状态</h2>
                 <p className="mt-1 text-sm text-secondary">
-                  当前表格按模型展开，展示 `new-api` 同步状态、最近检测结果和可用率补充指标。
+                  当前表格按模型展开，优先展示模型是否启用、最近检测状态和可用率趋势。
                 </p>
               </div>
               {currentSourceMeta ? (
@@ -573,9 +623,7 @@ export default function ProviderPage() {
                     <th className="px-4 py-4 font-medium">最近检测状态</th>
                     <th className="px-4 py-4 font-medium">最终质量分</th>
                     <th className="px-4 py-4 font-medium">可用率 30D</th>
-                    <th className="px-4 py-4 font-medium">平均延迟 30D</th>
                     <th className="px-4 py-4 font-medium">趋势</th>
-                    <th className="px-4 py-4 font-medium">测试数</th>
                     <th className="px-4 py-4 font-medium">结果详情</th>
                   </tr>
                 </thead>
@@ -627,36 +675,32 @@ export default function ProviderPage() {
                         <AvailabilityBadge value={row.uptime} enabled={row.enabled} />
                       </td>
                       <td className="px-4 py-4">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-primary">{formatLatency(row.avgLatencyMs)}</span>
-                          {row.p95LatencyMs != null ? (
-                            <span className="inline-flex items-center rounded-md bg-orange-500/15 px-2 py-0.5 text-xs font-semibold text-orange-300">
-                              p95 {formatLatencyCompact(row.p95LatencyMs)}
-                            </span>
-                          ) : null}
-                        </div>
-                      </td>
-                      <td className="px-4 py-4">
                         <TrendSparkline trend={row.trend} enabled={row.enabled} />
                       </td>
-                      <td className="px-4 py-4 font-medium text-primary">{row.testsCount ?? '--'}</td>
                       <td className="px-4 py-4">
-                        {row.compareUrl ? (
-                          <a
-                            href={row.compareUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center rounded-md bg-blue-500/15 px-2 py-1 text-xs font-semibold text-blue-300 hover:bg-blue-500/20"
-                          >
-                            {row.latestAttemptStatus && row.latestAttemptStatus !== 'done'
-                              ? '失败详情'
-                              : (row.latestMethodologyVersion || '查看结果')}
-                          </a>
-                        ) : (
-                          <span className="text-muted text-sm">
-                            {showProbeWarning ? '等待有效样本' : '暂无'}
-                          </span>
-                        )}
+                        <div className="flex flex-col items-start gap-2">
+                          {row.compareUrl ? (
+                            <a
+                              href={row.compareUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center rounded-md bg-blue-500/15 px-2 py-1 text-xs font-semibold text-blue-300 hover:bg-blue-500/20"
+                            >
+                              {row.latestAttemptStatus && row.latestAttemptStatus !== 'done'
+                                ? '失败详情'
+                                : (row.latestMethodologyVersion || '查看结果')}
+                            </a>
+                          ) : (
+                            <span className="text-muted text-sm">
+                              {showProbeWarning ? '等待有效样本' : '暂无'}
+                            </span>
+                          )}
+                          <div className="text-xs text-muted">
+                            测试数 {row.testsCount ?? '--'}
+                            {row.avgLatencyMs != null ? ` / 均延迟 ${formatLatency(row.avgLatencyMs)}` : ''}
+                            {row.p95LatencyMs != null ? ` / p95 ${formatLatencyCompact(row.p95LatencyMs)}` : ''}
+                          </div>
+                        </div>
                       </td>
                     </tr>
                   ))}

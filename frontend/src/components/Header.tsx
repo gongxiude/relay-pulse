@@ -1,14 +1,11 @@
 import { useState } from 'react';
-import { Activity, CheckCircle, AlertTriangle, Share2, Filter } from 'lucide-react';
+import { Activity, CheckCircle, AlertTriangle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation } from 'react-router-dom';
 
 import { SUPPORTED_LANGUAGES, LANGUAGE_PATH_MAP, LANGUAGE_NAMES, isSupportedLanguage, type SupportedLanguage } from '../i18n';
 import { FlagIcon } from './FlagIcon';
-import { useToast } from './Toast';
-import { shareCurrentPage } from '../utils/share';
 import { ThemeSwitcher } from './ThemeSwitcher';
-import { RefreshButton } from './RefreshButton';
 
 interface HeaderProps {
   stats: {
@@ -16,21 +13,12 @@ interface HeaderProps {
     healthy: number;
     issues: number;
   };
-  // 移动端筛选/刷新相关（可选，用于合并到 Header）
-  onFilterClick?: () => void;
-  onRefresh?: () => void;
-  loading?: boolean;
-  refreshCooldown?: boolean;
-  autoRefresh?: boolean;
-  onToggleAutoRefresh?: () => void;
-  activeFiltersCount?: number;
 }
 
-export function Header({ stats, onFilterClick, onRefresh, loading, refreshCooldown, autoRefresh = true, onToggleAutoRefresh, activeFiltersCount = 0 }: HeaderProps) {
+export function Header({ stats }: HeaderProps) {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
-  const { showToast } = useToast();
 
   // 语言下拉菜单状态
   const [showMobileLangMenu, setShowMobileLangMenu] = useState(false);
@@ -48,23 +36,6 @@ export function Header({ stats, onFilterClick, onRefresh, loading, refreshCooldo
     location.pathname === methodProviderPath &&
     searchParams.get('service') === 'cc' &&
     searchParams.get('channel') === '78:ClaudeCN-gpt';
-
-  // 处理分享按钮点击
-  const handleShare = async () => {
-    const result = await shareCurrentPage();
-    if (result.method === 'cancelled') {
-      // 用户取消分享，静默处理
-      return;
-    }
-    if (result.success) {
-      if (result.method === 'copy') {
-        showToast(t('share.linkCopied'), 'success');
-      }
-      // Web Share API 成功时不需要提示，系统会处理
-    } else {
-      showToast(t('share.copyFailed'), 'error');
-    }
-  };
 
   /**
    * 处理语言切换
@@ -270,16 +241,6 @@ export function Header({ stats, onFilterClick, onRefresh, loading, refreshCooldo
           {/* 主题切换器 */}
           <ThemeSwitcher />
 
-          {/* 分享按钮 */}
-          <button
-            onClick={handleShare}
-            className="p-2 rounded-lg bg-elevated/50 text-secondary hover:text-primary hover:bg-muted/50 transition-all duration-200 focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none"
-            aria-label={t('share.share')}
-            title={t('share.share')}
-          >
-            <Share2 size={16} />
-          </button>
-
           {/* 统计卡片 - 紧凑单行 */}
           <div className="flex gap-2">
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface/50 border border-default"
@@ -296,38 +257,8 @@ export function Header({ stats, onFilterClick, onRefresh, loading, refreshCooldo
         </div>
       </div>
 
-      {/* 移动端：筛选/刷新 + 推荐按钮（960px 以下显示） */}
+      {/* 移动端：统一导航 */}
       <div className="flex items-center gap-1.5 min-[960px]:hidden">
-        {/* 移动端：筛选按钮 */}
-        {onFilterClick && (
-          <button
-            onClick={onFilterClick}
-            className="flex items-center gap-1 px-2 py-1 bg-elevated text-secondary rounded-lg border border-default hover:bg-muted transition-colors text-xs focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none"
-            title={t('controls.mobile.filterBtn')}
-          >
-            <Filter size={12} />
-            <span>{t('controls.mobile.filterBtnShort')}</span>
-            {activeFiltersCount > 0 && (
-              <span className="px-1 py-0.5 bg-accent text-inverse text-[10px] rounded-full leading-none">
-                {activeFiltersCount}
-              </span>
-            )}
-          </button>
-        )}
-
-        {/* 移动端：刷新按钮（状态通过颜色表示，点击=切换+刷新） */}
-        {onRefresh && (
-          <RefreshButton
-            loading={loading || false}
-            autoRefresh={autoRefresh}
-            refreshCooldown={refreshCooldown || false}
-            onRefresh={onRefresh}
-            onToggleAutoRefresh={onToggleAutoRefresh}
-            size="sm"
-            showToggle={false}
-          />
-        )}
-
         <div className="flex items-center gap-1 rounded-lg border border-default/60 bg-surface/50 px-1 py-1">
           <button
             onClick={() => navigate(homePath)}
@@ -346,16 +277,6 @@ export function Header({ stats, onFilterClick, onRefresh, loading, refreshCooldo
             检测方法
           </button>
         </div>
-
-        {/* 分享按钮 - 移动端 */}
-        <button
-          onClick={handleShare}
-          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-elevated/50 text-secondary hover:text-primary hover:bg-muted/50 transition-all duration-200 text-xs ml-auto focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none"
-          aria-label={t('share.share')}
-        >
-          <Share2 size={12} />
-          {t('share.shareShort')}
-        </button>
       </div>
     </header>
   );

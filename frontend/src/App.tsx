@@ -1,789 +1,221 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { useLocation } from 'react-router-dom';
-import { Server } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
+import { useMemo, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
-import { Header } from './components/Header';
-import { Controls } from './components/Controls';
-import { StatusTable } from './components/StatusTable';
-import { StatusCard } from './components/StatusCard';
-import { Tooltip } from './components/Tooltip';
-import { EmptyFavorites } from './components/EmptyFavorites';
-import { AnnouncementsBanner } from './components/AnnouncementsBanner';
-import { useMonitorData } from './hooks/useMonitorData';
-import { useSeoMeta } from './hooks/useSeoMeta';
-import { useUrlState } from './hooks/useUrlState';
-import { useFavorites } from './hooks/useFavorites';
-import { useAnnouncements } from './hooks/useAnnouncements';
-import { useRpdiagScores, lookupRpdiagScore } from './hooks/useRpdiagScores';
-import { useAuditChannels } from './hooks/useAuditChannels';
-import { createMediaQueryEffect } from './utils/mediaQuery';
-import { trackPeriodChange, trackServiceFilter, trackEvent } from './utils/analytics';
-import { adaptAuditChannelsToMonitorData, buildAuditStatusIndex } from './utils/auditChannelAdapter';
-import { sortMonitorsWithPinning } from './utils/sortMonitors';
-import type { TooltipState, ProcessedMonitorData, ChannelOption } from './types';
+import { Server } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 
-// localStorage key for time align preference
-const STORAGE_KEY_TIME_ALIGN = 'relay-pulse-time-align';
+import { Header } from './components/Header';
+import { StatusTable } from './components/StatusTable';
+import { useAuditChannels } from './hooks/useAuditChannels';
+import { useMonitorData } from './hooks/useMonitorData';
+import { useRpdiagScores } from './hooks/useRpdiagScores';
+import { useSeoMeta } from './hooks/useSeoMeta';
+import { adaptAuditChannelsToMonitorData, buildAuditStatusIndex } from './utils/auditChannelAdapter';
+import type { ProcessedMonitorData, SortConfig } from './types';
+
+const EMPTY_TOOLTIP_HANDLER = () => {};
+
+function aggregateProviderRows(rows: ProcessedMonitorData[]): ProcessedMonitorData[] {
+  const groups = new Map<string, ProcessedMonitorData[]>();
+
+  rows.forEach((row) => {
+    const key = `${row.providerId}|${row.serviceType}`;
+    const items = groups.get(key);
+    if (items) {
+      items.push(row);
+    } else {
+      groups.set(key, [row]);
+    }
+  });
+
+  return Array.from(groups.values()).map((items) => {
+    const sorted = [...items].sort((left, right) => {
+      const leftEnabled = left.newApiStatusCode === 1 ? 1 : 0;
+      const rightEnabled = right.newApiStatusCode === 1 ? 1 : 0;
+      if (leftEnabled !== rightEnabled) return rightEnabled - leftEnabled;
+      return (right.uptime ?? -1) - (left.uptime ?? -1);
+    });
+    const primary = sorted[0];
+    const enabledCount = items.filter((item) => item.newApiStatusCode === 1).length;
+    const uptimeValues = items.map((item) => item.uptime).filter((value) => value >= 0);
+    const aggregateUptime = uptimeValues.length > 0
+      ? uptimeValues.reduce((sum, value) => sum + value, 0) / uptimeValues.length
+      : -1;
+
+    return {
+      ...primary,
+      id: `provider-${primary.providerId}-${primary.serviceType}`,
+      channel: primary.channel,
+      channelName: items.length > 1 ? `${items.length} 条通道` : (primary.channelName || primary.channel),
+      newApiStatusLabel: items.length > 1 ? `${enabledCount}/${items.length} 已启用` : primary.newApiStatusLabel,
+      uptime: aggregateUptime,
+      isMultiModel: true,
+      modelEntries: [],
+    };
+  });
+}
+
+function sortRows(data: ProcessedMonitorData[], sortConfig: SortConfig): ProcessedMonitorData[] {
+  const sorted = [...data];
+  const factor = sortConfig.direction === 'asc' ? 1 : -1;
+
+  sorted.sort((left, right) => {
+    switch (sortConfig.key) {
+      case 'provider':
+        return factor * left.providerName.localeCompare(right.providerName, 'zh-CN');
+      case 'service':
+        return factor * left.serviceType.localeCompare(right.serviceType, 'en');
+      case 'channel':
+        return factor * (left.channelName || left.channel || '').localeCompare(right.channelName || right.channel || '', 'zh-CN');
+      case 'status': {
+        const leftStatus = left.newApiStatusCode ?? 99;
+        const rightStatus = right.newApiStatusCode ?? 99;
+        return factor * (leftStatus - rightStatus);
+      }
+      case 'uptime':
+      default:
+        return factor * ((left.uptime ?? -1) - (right.uptime ?? -1));
+    }
+  });
+
+  return sorted;
+}
 
 function App() {
   const { t, i18n } = useTranslation();
   const location = useLocation();
   const seo = useSeoMeta({ pathname: location.pathname, language: i18n.language });
-
-  // 检测截图模式
-  const isScreenshotMode = useMemo(() => {
-    return new URLSearchParams(location.search).get('screenshot') === '1';
-  }, [location.search]);
-
-  // 截图模式下强制使用 default-dark 主题
-  useEffect(() => {
-    if (!isScreenshotMode) return;
-    const root = document.documentElement;
-    root.setAttribute('data-theme', 'default-dark');
-    root.style.colorScheme = 'dark';
-  }, [isScreenshotMode]);
-
-  // 截图时间戳（组件挂载时记录）
-  const screenshotTimestamp = useMemo(() => {
-    if (!isScreenshotMode) return '';
-    return new Date().toLocaleString('zh-CN', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-      timeZone: 'Asia/Shanghai',
-    });
-  }, [isScreenshotMode]);
-
-  // 截图标题（群名专属标识）
-  const screenshotTitle = useMemo(() => {
-    if (!isScreenshotMode) return '';
-    const raw = new URLSearchParams(location.search).get('title') || '';
-    // 清理控制字符，限制长度
-    const cleaned = raw.replace(/[\r\n\t]+/g, ' ').trim();
-    const chars = Array.from(cleaned);
-    if (chars.length > 60) return chars.slice(0, 60).join('') + '…';
-    return cleaned;
-  }, [isScreenshotMode, location.search]);
-
-  // 使用 URL 状态同步 Hook，支持收藏和分享
-  const [urlState, urlActions] = useUrlState();
-  const {
-    timeRange,
-    timeFilter,      // 每日时段过滤
-    board,           // 板块：hot/secondary/cold/all
-    filterProvider,
-    filterService,
-    filterChannel,
-    filterCategory,
-    showFavoritesOnly,  // 仅显示收藏
-    viewMode,
-    sortConfig,
-    isInitialSort,  // 是否为初始排序状态（用于赞助商置顶）
-  } = urlState;
-
-  // 移动端筛选抽屉状态（移到 App 层级，Header 和 Controls 共用）
-  const [showFilterDrawer, setShowFilterDrawer] = useState(false);
-  const {
-    setTimeRange,
-    setTimeFilter,   // 每日时段过滤
-    setBoard,        // 切换板块
-    setFilterProvider,
-    setFilterService,
-    setFilterChannel,
-    setFilterCategory,
-    setViewMode,
-    setSortConfig,
-    clearPriceRatioSort,
-    clearQualityScoreSort,
-    enterFavoritesMode,  // 进入收藏模式（保存快照）
-    exitFavoritesMode,   // 退出收藏模式（恢复快照）
-  } = urlActions;
-
-  // 收藏管理 Hook
-  const { favorites, isFavorite, toggleFavorite, cleanupMissingFavorites, count: favoritesCount } = useFavorites();
-
-  // 公告通知 Hook（截图模式下禁用，避免不必要的网络请求）
-  const {
-    data: announcementsData,
-    loading: announcementsLoading,
-    shouldShowBanner: shouldShowAnnouncementsBanner,
-    dismiss: dismissAnnouncements,
-  } = useAnnouncements(!isScreenshotMode);
-
-  // 时间对齐模式（使用 localStorage 持久化，不影响分享链接）
-  const [timeAlign, setTimeAlignState] = useState<string>(() => {
-    if (typeof window === 'undefined') return '';
-    return localStorage.getItem(STORAGE_KEY_TIME_ALIGN) ?? 'hour';
-  });
-
-  // 包装 setter 以同步到 localStorage
-  const setTimeAlign = useCallback((align: string) => {
-    setTimeAlignState(align);
-    if (typeof window !== 'undefined') {
-      if (align) {
-        localStorage.setItem(STORAGE_KEY_TIME_ALIGN, align);
-      } else {
-        localStorage.removeItem(STORAGE_KEY_TIME_ALIGN);
-      }
-    }
-    // 追踪时间对齐模式变化
-    trackEvent('change_time_align', { align: align || 'dynamic' });
-  }, []);
-
-  // 移动端检测（< 960px）
-  const [isMobile, setIsMobile] = useState(false);
-  useEffect(() => {
-    const cleanup = createMediaQueryEffect('tablet', setIsMobile);
-    return cleanup;
-  }, []);
-
-  // 移动端强制使用 table 视图，截图模式也强制 table
-  const effectiveViewMode = isScreenshotMode ? 'table' : (isMobile ? 'table' : viewMode);
-
-  const [tooltip, setTooltip] = useState<TooltipState>({
-    show: false,
-    x: 0,
-    y: 0,
-    data: null,
-  });
-
-  // 刷新冷却状态（5秒内重复刷新显示提示）
-  const REFRESH_COOLDOWN_MS = 5000;
-  const lastRefreshRef = useRef<number>(0);
-  const [refreshCooldown, setRefreshCooldown] = useState(false);
-
-  // 自动刷新开关（持久化到 localStorage，默认开启）
-  const AUTO_REFRESH_KEY = 'relay-pulse-auto-refresh';
-  const [autoRefresh, setAutoRefresh] = useState(() => {
-    try {
-      const stored = localStorage.getItem(AUTO_REFRESH_KEY);
-      if (stored === null) return true; // 无值时默认开启
-      return stored === 'true'; // 有值则尊重用户选择
-    } catch {
-      return true; // 异常也默认开启
-    }
-  });
-
-  // 切换自动刷新并持久化
-  const handleToggleAutoRefresh = () => {
-    setAutoRefresh(prev => {
-      const next = !prev;
-      try {
-        localStorage.setItem(AUTO_REFRESH_KEY, String(next));
-      } catch {
-        // ignore
-      }
-      return next;
-    });
-  };
+  const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'uptime', direction: 'desc' });
 
   const { scores: rpdiagScores, loaded: rpdiagScoresLoaded } = useRpdiagScores();
-  const { channels: auditChannels, loading: auditChannelsLoading } = useAuditChannels();
-
-  const { loading, error, rawData, slowLatencyMs, enableAnnotations, boardsEnabled, boardsEnabledLoaded, boardCounts, sponsorPinConfig, allMonitorIds, allMonitorIdsSupported, hidePriceColumn, rpdiagEnabled, refetch } = useMonitorData({
-    timeRange,
-    timeAlign,
-    timeFilter,
-    board,
-    filterService,
-    filterProvider,
-    filterChannel,
-    filterCategory,
-    sortConfig,
-    isInitialSort,
-    // 冷板数据不更新，禁用自动刷新以节省资源
-    autoRefresh: autoRefresh && board !== 'cold',
+  const { channels: auditChannels, loading: auditChannelsLoading, error: auditChannelsError } = useAuditChannels();
+  const {
+    rawData,
+    loading: monitorLoading,
+    error: monitorError,
+    slowLatencyMs,
+    enableAnnotations,
+    rpdiagEnabled,
+  } = useMonitorData({
+    timeRange: '90m',
+    board: 'all',
+    filterService: [],
+    filterProvider: [],
+    filterChannel: [],
+    filterCategory: [],
+    sortConfig: { key: 'uptime', direction: 'desc' },
+    isInitialSort: false,
+    autoRefresh: true,
     rpdiagScores,
     rpdiagScoresLoaded,
   });
 
-  const hasAuditChannelSource = auditChannels.length > 0;
-  const monitorStatusIndex = useMemo(() => buildAuditStatusIndex(rawData), [rawData]);
-  const displayRawData = useMemo<ProcessedMonitorData[]>(() => {
-    if (!hasAuditChannelSource) return rawData;
-    return adaptAuditChannelsToMonitorData(auditChannels, monitorStatusIndex);
-  }, [hasAuditChannelSource, rawData, auditChannels, monitorStatusIndex]);
+  const rows = useMemo(() => {
+    const monitorIndex = buildAuditStatusIndex(rawData);
+    return adaptAuditChannelsToMonitorData(auditChannels, monitorIndex);
+  }, [auditChannels, rawData]);
 
-  // 运行时 hide_price_column 切到 true 后，主动抹掉旧的 priceRatio_* URL 排序，
-  // 避免点 hide 后用户带着隐藏列的"按价格排序"链接刷新仍触发该排序。
-  // 使用 clearPriceRatioSort（不写 hasManualSort=true），刷新仍可恢复置顶语义。
-  useEffect(() => {
-    if (hidePriceColumn) {
-      clearPriceRatioSort();
-    }
-  }, [hidePriceColumn, clearPriceRatioSort]);
+  const providerRows = useMemo(() => aggregateProviderRows(rows), [rows]);
+  const sortedRows = useMemo(() => sortRows(providerRows, sortConfig), [providerRows, sortConfig]);
 
-  // 同理：rpdiag 关闭（私有部署）后质量列消失，抹掉残留的 qualityScore_* URL 排序，
-  // 避免带"按质量排序"链接刷新仍指向已隐藏的列。
-  useEffect(() => {
-    if (!rpdiagEnabled) {
-      clearQualityScoreSort();
-    }
-  }, [rpdiagEnabled, clearQualityScoreSort]);
+  const headerStats = useMemo(() => {
+    const total = providerRows.length;
+    const healthy = providerRows.filter((row) => row.newApiStatusCode === 1).length;
+    return {
+      total,
+      healthy,
+      issues: Math.max(0, total - healthy),
+    };
+  }, [providerRows]);
 
-  // 板块功能禁用时，自动归一 board 到 hot
-  // 解决：用户手动输入 ?board=cold 但功能未启用时的 URL 混乱问题
-  // 注意：仅当 API 已返回板块配置后才执行，避免在初始加载时覆盖 URL 参数
-  useEffect(() => {
-    if (!boardsEnabledLoaded) return;  // API 未返回前不执行，尊重 URL 参数
-    if (!boardsEnabled && board !== 'hot') {
-      setBoard('hot');
-    }
-  }, [boardsEnabledLoaded, boardsEnabled, board, setBoard]);
-
-  // 有效收藏计数：favorites ∩ allMonitorIds
-  // - loading/error 时回退到本地数量，避免短暂显示 0
-  // - 旧后端不支持 all_monitor_ids 时也回退
-  const effectiveFavoritesCount = useMemo(() => {
-    if (loading || error) return favoritesCount;
-    if (!allMonitorIdsSupported) return favoritesCount; // 旧后端不支持
-    if (favoritesCount === 0) return 0;
-
-    let count = 0;
-    favorites.forEach((id) => {
-      if (allMonitorIds.has(id)) count++;
-    });
-    return count;
-  }, [loading, error, favorites, favoritesCount, allMonitorIds, allMonitorIdsSupported]);
-
-  // 静默清理无效收藏：移除已从配置中删除的监控项
-  // - 仅在 API 成功返回且后端支持 all_monitor_ids 时执行
-  // - allMonitorIds 是跨板块的全量列表，不会误删移动板块的收藏
-  useEffect(() => {
-    if (loading || error) return;
-    if (!allMonitorIdsSupported) return; // 旧后端不支持，跳过
-    if (favorites.size === 0) return;
-
-    cleanupMissingFavorites(allMonitorIds);
-  }, [loading, error, allMonitorIds, allMonitorIdsSupported, favorites.size, cleanupMissingFavorites]);
-
-  // 统计激活的筛选器数量（用于移动端 Header 显示）
-  const activeFiltersCount = [
-    showFavoritesOnly,
-    !hasAuditChannelSource && filterCategory.length > 0,
-    filterProvider.length > 0,
-    filterService.length > 0,
-    filterChannel.length > 0,
-  ].filter(Boolean).length;
-
-  // 基础数据：应用收藏筛选后的数据（如适用）
-  const baseData = useMemo(() => {
-    if (!showFavoritesOnly) return displayRawData;
-    return displayRawData.filter(item => favorites.has(item.id));
-  }, [displayRawData, showFavoritesOnly, favorites]);
-
-  // 选项基础数据：基于 rawData（未被筛选器过滤），用于计算 effectiveXxx
-  // 这避免了循环依赖：选择一个 provider 后，其他 provider 仍然可见
-  const optionsBaseData = useMemo(() => {
-    if (!showFavoritesOnly) return displayRawData;
-    return displayRawData.filter(item => favorites.has(item.id));
-  }, [displayRawData, showFavoritesOnly, favorites]);
-
-  // 最终过滤后的数据（应用所有筛选器）
-  const filteredData = useMemo(() => {
-    // 预构建 Set 优化 O(n) includes → O(1) has
-    const providerSet = filterProvider.length > 0 ? new Set(filterProvider) : null;
-    const serviceSet = filterService.length > 0 ? new Set(filterService) : null;
-    const channelSet = filterChannel.length > 0 ? new Set(filterChannel) : null;
-    const categorySet = !hasAuditChannelSource && filterCategory.length > 0 ? new Set(filterCategory) : null;
-
-    return baseData.filter(item => {
-      if (providerSet && !providerSet.has(item.providerId)) return false;
-      if (serviceSet && !serviceSet.has(item.serviceType.toLowerCase())) return false;
-      if (channelSet && !(item.channel && channelSet.has(item.channel))) return false;
-      if (categorySet && !categorySet.has(item.category)) return false;
-      return true;
-    });
-  }, [baseData, filterProvider, filterService, filterChannel, filterCategory, hasAuditChannelSource]);
-
-  const sortedFilteredData = useMemo(() => {
-    const enriched = rpdiagEnabled && rpdiagScoresLoaded
-      ? filteredData.map((item) => ({
-          ...item,
-          qualityScore:
-            lookupRpdiagScore(rpdiagScores, item.providerId, item.serviceType, item.channelName || item.channel)
-              ?.max_score ?? item.qualityScore ?? null,
-        }))
-      : filteredData;
-    return sortMonitorsWithPinning(enriched, sortConfig, sponsorPinConfig, isInitialSort);
-  }, [filteredData, rpdiagEnabled, rpdiagScoresLoaded, rpdiagScores, sortConfig, sponsorPinConfig, isInitialSort]);
-
-  const effectiveStats = useMemo(() => {
-    const total = sortedFilteredData.length;
-    const healthy = sortedFilteredData.filter((i) => i.currentStatus === 'AVAILABLE').length;
-    return { total, healthy, issues: total - healthy };
-  }, [sortedFilteredData]);
-
-  // 动态 Provider 选项：联动筛选 + 保留已选项
-  const effectiveProviders = useMemo(() => {
-    // 预构建 Set 优化查询性能
-    const serviceSet = filterService.length > 0 ? new Set(filterService) : null;
-    const channelSet = filterChannel.length > 0 ? new Set(filterChannel) : null;
-    const categorySet = !hasAuditChannelSource && filterCategory.length > 0 ? new Set(filterCategory) : null;
-    const providerSet = new Set(filterProvider);
-
-    // 1. 应用其他筛选条件（不包括 provider 自身）
-    const filtered = optionsBaseData.filter(item => {
-      if (serviceSet && !serviceSet.has(item.serviceType.toLowerCase())) return false;
-      if (channelSet && !(item.channel && channelSet.has(item.channel))) return false;
-      if (categorySet && !categorySet.has(item.category)) return false;
-      return true;
-    });
-
-    // 2. 收集当前可用的 provider（带计数）
-    const availableMap = new Map<string, { label: string; count: number }>();
-    filtered.forEach(item => {
-      if (!availableMap.has(item.providerId)) {
-        availableMap.set(item.providerId, { label: item.providerName, count: 1 });
-      } else {
-        availableMap.get(item.providerId)!.count++;
-      }
-    });
-
-    // 3. 确保已选的 provider 始终可见（从全量数据中补充 label）
-    filterProvider.forEach(providerId => {
-      if (!availableMap.has(providerId)) {
-        const item = optionsBaseData.find(d => d.providerId === providerId);
-        if (item) {
-          availableMap.set(providerId, { label: item.providerName, count: 0 });
-        }
-      }
-    });
-
-    // 4. 转换为选项数组，标记无数据的已选项
-    return Array.from(availableMap.entries())
-      .sort((a, b) => a[1].label.localeCompare(b[1].label, 'zh-CN'))
-      .map(([value, { label, count }]) => ({
-        value,
-        label: count === 0 && providerSet.has(value) ? `${label} (0)` : label,
-      }));
-  }, [optionsBaseData, filterService, filterChannel, filterCategory, filterProvider, hasAuditChannelSource]);
-
-  // 动态 Service 选项：联动筛选 + 保留已选项
-  const effectiveServices = useMemo(() => {
-    // 预构建 Set 优化查询性能
-    const providerSet = filterProvider.length > 0 ? new Set(filterProvider) : null;
-    const channelSet = filterChannel.length > 0 ? new Set(filterChannel) : null;
-    const categorySet = !hasAuditChannelSource && filterCategory.length > 0 ? new Set(filterCategory) : null;
-    const serviceSet = new Set(filterService);
-
-    // 1. 应用其他筛选条件（不包括 service 自身）
-    const filtered = optionsBaseData.filter(item => {
-      if (providerSet && !providerSet.has(item.providerId)) return false;
-      if (channelSet && !(item.channel && channelSet.has(item.channel))) return false;
-      if (categorySet && !categorySet.has(item.category)) return false;
-      return true;
-    });
-
-    // 2. 收集当前可用的 service（带计数）
-    const availableMap = new Map<string, number>();
-    filtered.forEach(item => {
-      const service = item.serviceType.toLowerCase();
-      availableMap.set(service, (availableMap.get(service) || 0) + 1);
-    });
-
-    // 3. 确保已选的 service 始终可见
-    filterService.forEach(service => {
-      if (!availableMap.has(service)) {
-        availableMap.set(service, 0);
-      }
-    });
-
-    // 4. 转换为数组，标记无数据的已选项
-    return Array.from(availableMap.entries())
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([value, count]) =>
-        count === 0 && serviceSet.has(value) ? `${value} (0)` : value
-      );
-  }, [optionsBaseData, filterProvider, filterChannel, filterCategory, filterService, hasAuditChannelSource]);
-
-  // 动态 Channel 选项：联动筛选 + 保留已选项
-  const effectiveChannels = useMemo<ChannelOption[]>(() => {
-    // 预构建 Set 优化查询性能
-    const providerSet = filterProvider.length > 0 ? new Set(filterProvider) : null;
-    const serviceSet = filterService.length > 0 ? new Set(filterService) : null;
-    const categorySet = !hasAuditChannelSource && filterCategory.length > 0 ? new Set(filterCategory) : null;
-    const channelSet = new Set(filterChannel);
-
-    // 1. 应用其他筛选条件（不包括 channel 自身）
-    const filtered = optionsBaseData.filter(item => {
-      if (providerSet && !providerSet.has(item.providerId)) return false;
-      if (serviceSet && !serviceSet.has(item.serviceType.toLowerCase())) return false;
-      if (categorySet && !categorySet.has(item.category)) return false;
-      return true;
-    });
-
-    // 2. 收集当前可用的 channel（带计数）+ channelName 映射
-    const availableMap = new Map<string, { count: number; label: string }>();
-    filtered.forEach(item => {
-      if (item.channel) {
-        const existing = availableMap.get(item.channel);
-        if (existing) {
-          existing.count++;
-        } else {
-          availableMap.set(item.channel, {
-            count: 1,
-            label: item.channelName || item.channel,
-          });
-        }
-      }
-    });
-
-    // 3. 确保已选的 channel 始终可见（从全量数据中查找 channelName）
-    filterChannel.forEach(channel => {
-      if (!availableMap.has(channel)) {
-        // 从全量数据中查找 channelName
-        const found = optionsBaseData.find(item => item.channel === channel);
-        availableMap.set(channel, {
-          count: 0,
-          label: found?.channelName || channel,
-        });
-      }
-    });
-
-    // 4. 转换为 ChannelOption[]，按 label 排序，标记无数据的已选项
-    return Array.from(availableMap.entries())
-      .sort((a, b) => a[1].label.localeCompare(b[1].label, 'zh-CN'))
-      .map(([value, { count, label }]) => ({
-        value,
-        label: count === 0 && channelSet.has(value) ? `${label} (0)` : label,
-      }));
-  }, [optionsBaseData, filterProvider, filterService, filterCategory, filterChannel, hasAuditChannelSource]);
-
-  // 动态 Category 选项：联动筛选 + 保留已选项
-  const effectiveCategories = useMemo(() => {
-    // 预构建 Set 优化查询性能
-    const providerSet = filterProvider.length > 0 ? new Set(filterProvider) : null;
-    const serviceSet = filterService.length > 0 ? new Set(filterService) : null;
-    const channelSet = filterChannel.length > 0 ? new Set(filterChannel) : null;
-    const categorySet = new Set(filterCategory);
-
-    // 1. 应用其他筛选条件（不包括 category 自身）
-    const filtered = optionsBaseData.filter(item => {
-      if (providerSet && !providerSet.has(item.providerId)) return false;
-      if (serviceSet && !serviceSet.has(item.serviceType.toLowerCase())) return false;
-      if (channelSet && !(item.channel && channelSet.has(item.channel))) return false;
-      return true;
-    });
-
-    // 2. 收集当前可用的 category（带计数）
-    const availableMap = new Map<string, number>();
-    filtered.forEach(item => {
-      availableMap.set(item.category, (availableMap.get(item.category) || 0) + 1);
-    });
-
-    // 3. 确保已选的 category 始终可见
-    filterCategory.forEach(category => {
-      if (!availableMap.has(category)) {
-        availableMap.set(category, 0);
-      }
-    });
-
-    // 4. 转换为数组，标记无数据的已选项
-    return Array.from(availableMap.entries())
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([value, count]) =>
-        count === 0 && categorySet.has(value) ? `${value} (0)` : value
-      );
-  }, [optionsBaseData, filterProvider, filterService, filterChannel, filterCategory]);
-
-  // 收藏模式切换（使用事务性方法，保存/恢复筛选状态快照）
-  const handleFavoritesModeChange = useCallback((enabled: boolean) => {
-    if (enabled) {
-      enterFavoritesMode();
-    } else {
-      exitFavoritesMode();
-    }
-  }, [enterFavoritesMode, exitFavoritesMode]);
-
-  // 追踪时间范围变化
-  useEffect(() => {
-    trackPeriodChange(timeRange);
-  }, [timeRange]);
-
-  // 追踪服务筛选变化
-  useEffect(() => {
-    trackServiceFilter(
-      filterProvider.length > 0 ? filterProvider.join(',') : undefined,
-      filterService.length > 0 ? filterService.join(',') : undefined
-    );
-  }, [filterProvider, filterService]);
-
-  // 追踪通道筛选变化
-  useEffect(() => {
-    if (filterChannel.length > 0) {
-      trackEvent('filter_channel', { channel: filterChannel.join(',') });
-    }
-  }, [filterChannel]);
-
-  // 追踪分类筛选变化
-  useEffect(() => {
-    if (filterCategory.length > 0) {
-      trackEvent('filter_category', { category: filterCategory.join(',') });
-    }
-  }, [filterCategory]);
-
-  // 追踪视图模式切换（使用实际显示的视图模式）
-  useEffect(() => {
-    trackEvent('change_view_mode', { mode: effectiveViewMode });
-  }, [effectiveViewMode]);
+  const effectiveError = auditChannelsError || monitorError;
+  const loading = auditChannelsLoading || monitorLoading;
 
   const handleSort = (key: string) => {
-    let direction: 'asc' | 'desc' = 'desc';
-    // 初始状态（置顶模式）下，首次点击任何排序都使用降序
-    // 非初始状态下，点击同一字段切换升降序
-    if (!isInitialSort && sortConfig.key === key && sortConfig.direction === 'desc') {
-      direction = 'asc';
-    }
-    setSortConfig({ key, direction });
-  };
-
-  const handleBlockHover = useCallback((
-    e: React.MouseEvent<HTMLDivElement>,
-    point: ProcessedMonitorData['history'][number]
-  ) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    setTooltip({
-      show: true,
-      x: rect.left + rect.width / 2,
-      y: rect.top - 10,
-      blockBottom: rect.bottom + 10,
-      data: point,
+    setSortConfig((current) => {
+      if (current.key === key) {
+        return {
+          key,
+          direction: current.direction === 'asc' ? 'desc' : 'asc',
+        };
+      }
+      return {
+        key,
+        direction: key === 'provider' || key === 'service' || key === 'channel' ? 'asc' : 'desc',
+      };
     });
-  }, []);
-
-  const handleBlockLeave = useCallback(() => {
-    setTooltip((prev) => ({ ...prev, show: false }));
-  }, []);
-
-  const handleRefresh = () => {
-    const now = Date.now();
-    const elapsed = now - lastRefreshRef.current;
-
-    if (elapsed < REFRESH_COOLDOWN_MS) {
-      // 冷却中，显示提示
-      setRefreshCooldown(true);
-      setTimeout(() => setRefreshCooldown(false), 2000); // 提示显示 2 秒
-      return;
-    }
-
-    lastRefreshRef.current = now;
-    trackEvent('manual_refresh');
-    refetch(true); // 绕过浏览器缓存
   };
 
   return (
     <>
-      {/* 动态更新 HTML meta 标签（canonical/hreflang 由后端 SSR 注入，避免重复） */}
       <Helmet>
         <html lang={seo.htmlLang} />
-        <title>{t('meta.title')}</title>
-        <meta name="description" content={t('meta.description')} />
-        {/* 截图模式禁用所有动画 */}
-        {isScreenshotMode && (
-          <style>{`
-            *, *::before, *::after {
-              animation: none !important;
-              transition: none !important;
-            }
-          `}</style>
-        )}
+        <title>RelayPulse</title>
+        <meta
+          name="description"
+          content="RelayPulse 首页基于 new-api 同步的真实服务商渠道数据，展示当前状态、可用率和可用率趋势。"
+        />
       </Helmet>
 
-      <div
-        className={isScreenshotMode
-          ? "bg-page text-primary font-sans selection-accent overflow-x-hidden"
-          : "min-h-screen bg-page text-primary font-sans selection-accent overflow-x-hidden"
-        }
-        data-ready={isScreenshotMode && !loading ? 'true' : undefined}
-        data-error={isScreenshotMode && error ? error : undefined}
-      >
-        {/* 全局 Tooltip - 截图模式下隐藏 */}
-        {!isScreenshotMode && (
-          <Tooltip tooltip={tooltip} onClose={handleBlockLeave} slowLatencyMs={slowLatencyMs} timeRange={timeRange} />
-        )}
+      <div className="min-h-screen bg-page text-primary font-sans selection-accent">
+        <div className="max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8">
+          <Header stats={headerStats} />
 
-        {/* 背景装饰 - 截图模式下隐藏 */}
-        {!isScreenshotMode && (
-          <div className="fixed top-0 left-0 w-full h-full overflow-hidden pointer-events-none z-0">
-            <div className="absolute top-[-10%] right-[-10%] w-[600px] h-[600px] bg-accent/10 rounded-full blur-[120px]" />
-            <div className="absolute bottom-[-10%] left-[-10%] w-[600px] h-[600px] bg-accent/10 rounded-full blur-[120px]" />
-          </div>
-        )}
+          <section className="mb-5 rounded-2xl border border-default/70 bg-surface/55 px-5 py-5">
+            <h1 className="text-3xl font-bold tracking-tight text-primary">服务商列表</h1>
+            <p className="mt-3 text-secondary text-base leading-relaxed">
+              当前首页只展示从 `new-api` 同步过来的真实服务商、服务、渠道状态和可用率趋势。点击服务商后进入详情页，查看该渠道下每个模型的状态。
+            </p>
+            <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-secondary">
+              <span>当前服务商行 {providerRows.length}</span>
+              <span>同步渠道快照 {rows.length}</span>
+              <span>已启用 {headerStats.healthy}</span>
+              <span>未启用 {headerStats.issues}</span>
+            </div>
+          </section>
 
-        <div className={isScreenshotMode
-          ? "relative z-10 w-[1200px] mx-auto px-4 py-4"
-          : "relative z-10 max-w-7xl mx-auto px-4 py-4 sm:py-6 sm:px-6 lg:px-8"
-        }>
-          {/* 头部 - 截图模式下隐藏 */}
-          {!isScreenshotMode && (
-            <Header
-              stats={effectiveStats}
-              onFilterClick={() => setShowFilterDrawer(true)}
-              onRefresh={handleRefresh}
-              loading={loading}
-              refreshCooldown={refreshCooldown}
-              autoRefresh={autoRefresh}
-              onToggleAutoRefresh={handleToggleAutoRefresh}
-              activeFiltersCount={activeFiltersCount}
-            />
-          )}
-
-          {/* 公告横幅 - 截图模式下隐藏 */}
-          {!isScreenshotMode && (
-            <AnnouncementsBanner
-              className="mb-4"
-              data={announcementsData}
-              loading={announcementsLoading}
-              shouldShowBanner={shouldShowAnnouncementsBanner}
-              onDismiss={dismissAnnouncements}
-            />
-          )}
-
-          {/* 控制栏 - 截图模式下隐藏 */}
-          {!isScreenshotMode && (
-            <Controls
-              filterProvider={filterProvider}
-              filterService={filterService}
-              filterChannel={filterChannel}
-              filterCategory={filterCategory}
-              showFavoritesOnly={showFavoritesOnly}
-              favorites={favorites}
-              favoritesCount={effectiveFavoritesCount}
-              timeRange={timeRange}
-              timeAlign={timeAlign}
-              timeFilter={timeFilter}
-              board={board}
-              boardsEnabled={boardsEnabled}
-              boardCounts={boardCounts}
-              viewMode={viewMode}
-              loading={loading}
-              channels={effectiveChannels}
-              providers={effectiveProviders}
-              effectiveServices={effectiveServices}
-              effectiveCategories={hasAuditChannelSource ? [] : effectiveCategories}
-              showCategoryFilter={!hasAuditChannelSource}
-              isMobile={isMobile}
-              showFilterDrawer={showFilterDrawer}
-              onFilterDrawerClose={() => setShowFilterDrawer(false)}
-              onProviderChange={setFilterProvider}
-              onServiceChange={setFilterService}
-              onChannelChange={setFilterChannel}
-              onCategoryChange={setFilterCategory}
-              onShowFavoritesOnlyChange={handleFavoritesModeChange}
-              onTimeRangeChange={setTimeRange}
-              onTimeAlignChange={setTimeAlign}
-              onTimeFilterChange={setTimeFilter}
-              onBoardChange={setBoard}
-              onViewModeChange={setViewMode}
-              onRefresh={handleRefresh}
-              refreshCooldown={refreshCooldown}
-              autoRefresh={autoRefresh}
-              onToggleAutoRefresh={handleToggleAutoRefresh}
-            />
-          )}
-
-          {/* 截图模式标题栏 */}
-          {isScreenshotMode && (
-            <div className="mb-3 px-3 py-2 bg-elevated border border-default rounded-lg text-xs text-secondary">
-              {/* 群专属标题行 - 仅当有 title 时显示 */}
-              {screenshotTitle && (
-                <div className="text-sm text-primary font-medium mb-1 truncate">
-                  {screenshotTitle}
-                </div>
-              )}
-              {/* 时间和服务信息行 */}
-              <div className="flex items-center justify-between">
-                <span className="font-mono">{screenshotTimestamp}</span>
-                <span>
-                  {sortedFilteredData.length} 个服务 | {timeRange}
-                </span>
+          <main className="overflow-hidden rounded-2xl border border-default/70 bg-surface/55 shadow-xl backdrop-blur-sm">
+            {effectiveError ? (
+              <div className="flex min-h-[320px] flex-col items-center justify-center px-6 py-16 text-danger">
+                <Server size={48} className="mb-4 opacity-30" />
+                <p className="text-lg">{t('common.error', { message: effectiveError })}</p>
               </div>
-            </div>
-          )}
-
-          {/* 内容区域 */}
-          {/* 冷板提示条 - 截图模式下隐藏 */}
-          {!isScreenshotMode && boardsEnabled && board === 'cold' && (
-            <div className="mb-4 px-4 py-3 bg-info/10 border border-info/30 rounded-lg text-info text-sm flex items-center gap-2">
-              <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <span>{t('controls.boards.coldNotice')}</span>
-            </div>
-          )}
-          {error ? (
-            <div className="flex flex-col items-center justify-center py-20 text-danger">
-              <Server size={64} className="mb-4 opacity-20" />
-              <p className="text-lg">{t('common.error', { message: error })}</p>
-            </div>
-          ) : (loading || (hasAuditChannelSource && auditChannelsLoading)) && displayRawData.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-64 text-muted gap-4">
-              <div className="w-12 h-12 border-4 border-accent/20 rounded-full animate-spin" style={{ borderTopColor: 'hsl(var(--accent))' }} />
-              <p className="animate-pulse">{t('common.loading')}</p>
-            </div>
-          ) : displayRawData.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 text-muted">
-              <Server size={64} className="mb-4 opacity-20" />
-              <p className="text-lg">{t('common.noData')}</p>
-            </div>
-          ) : showFavoritesOnly && filteredData.length === 0 ? (
-            // 开启收藏筛选但无收藏时显示空状态
-            <EmptyFavorites onClearFilter={exitFavoritesMode} />
-          ) : (
-            <>
-              {effectiveViewMode === 'table' && (
-                <StatusTable
-                  data={sortedFilteredData}
-                  sortConfig={sortConfig}
-                  isInitialSort={isInitialSort}
-                  timeRange={timeRange}
-                  slowLatencyMs={slowLatencyMs}
-                  enableAnnotations={isScreenshotMode ? false : enableAnnotations}
-                  showCategoryTag={!isScreenshotMode}
-                  showSponsor={!isScreenshotMode}
-                  showModel={false}
-                  showListedDays={false}
-                  showLastCheck={false}
-                  showQuality={false}
-                  isFavorite={isFavorite}
-                  onToggleFavorite={toggleFavorite}
-                  onSort={handleSort}
-                  onBlockHover={handleBlockHover}
-                  onBlockLeave={handleBlockLeave}
-                  onFilterProvider={(providerId) => setFilterProvider([providerId])}
-                  rpdiagScores={rpdiagScores}
-                  rpdiagScoresLoaded={rpdiagScoresLoaded}
-                  rpdiagEnabled={rpdiagEnabled}
-                  hidePriceColumn={true}
-                />
-              )}
-
-              {effectiveViewMode === 'grid' && (
-                <div data-heatmap-container className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                  {sortedFilteredData.map((item) => (
-                    <StatusCard
-                      key={item.id}
-                      item={item}
-                      timeRange={timeRange}
-                      slowLatencyMs={slowLatencyMs}
-                      enableAnnotations={enableAnnotations}
-                      isFavorite={isFavorite}
-                      onToggleFavorite={toggleFavorite}
-                      hidePriceColumn={hidePriceColumn}
-                      onBlockHover={handleBlockHover}
-                      onBlockLeave={handleBlockLeave}
-                    />
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-
+            ) : loading && providerRows.length === 0 ? (
+              <div className="flex min-h-[320px] flex-col items-center justify-center gap-4 px-6 py-16 text-muted">
+                <div className="h-12 w-12 animate-spin rounded-full border-4 border-accent/20" style={{ borderTopColor: 'hsl(var(--accent))' }} />
+                <p>{t('common.loading')}</p>
+              </div>
+            ) : providerRows.length === 0 ? (
+              <div className="flex min-h-[320px] flex-col items-center justify-center px-6 py-16 text-muted">
+                <Server size={48} className="mb-4 opacity-30" />
+                <p className="text-lg">{t('common.noData')}</p>
+              </div>
+            ) : (
+              <StatusTable
+                data={sortedRows}
+                sortConfig={sortConfig}
+                isInitialSort={false}
+                timeRange="90m"
+                slowLatencyMs={slowLatencyMs}
+                enableAnnotations={enableAnnotations}
+                showCategoryTag={false}
+                showSponsor={false}
+                showModel={false}
+                showListedDays={false}
+                showLastCheck={false}
+                showQuality={false}
+                isFavorite={() => false}
+                onToggleFavorite={() => {}}
+                onSort={handleSort}
+                onBlockHover={EMPTY_TOOLTIP_HANDLER}
+                onBlockLeave={EMPTY_TOOLTIP_HANDLER}
+                rpdiagScores={rpdiagScores}
+                rpdiagScoresLoaded={rpdiagScoresLoaded}
+                rpdiagEnabled={rpdiagEnabled}
+                hidePriceColumn
+              />
+            )}
+          </main>
         </div>
       </div>
     </>
