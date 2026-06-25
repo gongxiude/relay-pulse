@@ -2,7 +2,6 @@ import { Helmet } from 'react-helmet-async';
 import { useMemo } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 
-import { Footer } from '../components/Footer';
 import { Header } from '../components/Header';
 import { useAuditCompare } from '../hooks/useAuditCompare';
 import { useSeoMeta } from '../hooks/useSeoMeta';
@@ -208,10 +207,6 @@ export default function DetectComparePage() {
             </>
           )}
         </main>
-
-        <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8">
-          <Footer />
-        </div>
       </div>
     </>
   );

@@ -1,10 +1,9 @@
 import { useEffect, useMemo } from 'react';
 import { useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
-import { CircleHelp, Flame, Sparkles } from 'lucide-react';
+import { CircleHelp, Sparkles } from 'lucide-react';
 
 import { Header } from '../components/Header';
-import { Footer } from '../components/Footer';
 import { ChannelTypeIcon, parseChannelType } from '../components/ChannelTypeIcon';
 import { useAuditChannels } from '../hooks/useAuditChannels';
 import { useAuditDiagnosticLatest } from '../hooks/useAuditDiagnosticLatest';
@@ -234,6 +233,9 @@ export default function ProviderPage() {
     return SOURCE_META[currentSourceKey as Exclude<SourceKey, 'all'>];
   }, [currentSourceKey]);
 
+  const currentServiceGroup = currentSnapshot?.service || '--';
+  const currentServiceViewLabel = SERVICE_TAB_LABELS[selectedService];
+
   useEffect(() => {
     if (!providerExists) return;
     const next = new URLSearchParams(searchParams);
@@ -410,16 +412,11 @@ export default function ProviderPage() {
         />
       </Helmet>
 
-      <div className="min-h-screen bg-page text-primary font-sans selection-accent overflow-x-hidden">
-        <div className="fixed top-0 left-0 w-full h-full overflow-hidden pointer-events-none z-0">
-          <div className="absolute top-[-12%] right-[-8%] w-[560px] h-[560px] bg-accent/8 rounded-full blur-[120px]" />
-          <div className="absolute bottom-[-18%] left-[-8%] w-[520px] h-[520px] bg-cyan-500/8 rounded-full blur-[120px]" />
-        </div>
-
-        <div className="relative z-10 max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8">
+      <div className="min-h-screen bg-page text-primary font-sans selection-accent">
+        <div className="max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8">
           <Header stats={headerStats} />
 
-          <section className="mb-6">
+          <section className="mb-5 rounded-2xl border border-default/70 bg-surface/55 px-5 py-5">
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="text-3xl font-bold tracking-tight text-primary">{providerDisplayName || '服务商详情'}</h1>
               {currentSourceMeta ? (
@@ -431,49 +428,53 @@ export default function ProviderPage() {
               {currentSnapshot ? <SnapshotStatusBadge snapshot={currentSnapshot} /> : null}
             </div>
             <p className="mt-3 text-secondary text-base leading-relaxed">
-              当前页按 `new-api` 同步过来的真实通道展开，展示该服务商在选定渠道下的模型状态、最近检测状态与可用率补充信息。
+              当前页按 `new-api` 同步的真实通道展开，展示该服务商在当前渠道下的模型状态、最近检测状态和可用率补充信息。
             </p>
-          </section>
-
-          <section className="mb-4">
-            <div className="flex items-center gap-3">
-              <span className="text-sm text-secondary min-w-[2rem]">服务</span>
-              <div className="inline-flex rounded-xl border border-default/70 bg-surface/70 p-1">
-                {(['cc', 'cx'] as ServiceTab[]).map((tab) => {
-                  const active = selectedService === tab;
-                  const disabled = !providerServiceTabs.includes(tab);
-                  return (
-                    <button
-                      key={tab}
-                      type="button"
-                      disabled={disabled}
-                      onClick={() => updateParam(setSearchParams, searchParams, { service: tab, channel: undefined, model: undefined })}
-                      className={`px-4 py-2 text-sm font-semibold rounded-lg transition ${
-                        active
-                          ? 'bg-blue-500 text-white shadow-sm'
-                          : disabled
-                          ? 'text-muted opacity-40 cursor-not-allowed'
-                          : 'text-secondary hover:text-primary hover:bg-elevated/70'
-                      }`}
-                    >
-                      {SERVICE_TAB_LABELS[tab]}
-                    </button>
-                  );
-                })}
-              </div>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <span className="text-sm text-secondary">服务视图</span>
+              {providerServiceTabs.length > 1 ? (
+                <div className="inline-flex rounded-xl border border-default/70 bg-surface/70 p-1">
+                  {(['cc', 'cx'] as ServiceTab[]).map((tab) => {
+                    const active = selectedService === tab;
+                    const disabled = !providerServiceTabs.includes(tab);
+                    return (
+                      <button
+                        key={tab}
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => updateParam(setSearchParams, searchParams, { service: tab, channel: undefined, model: undefined })}
+                        className={`px-4 py-2 text-sm font-semibold rounded-lg transition ${
+                          active
+                            ? 'bg-blue-500 text-white shadow-sm'
+                            : disabled
+                            ? 'text-muted opacity-40 cursor-not-allowed'
+                            : 'text-secondary hover:text-primary hover:bg-elevated/70'
+                        }`}
+                      >
+                        {SERVICE_TAB_LABELS[tab]}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <span className="inline-flex rounded-full border border-default/70 bg-surface/70 px-3 py-1.5 text-sm font-medium text-primary">
+                  {currentServiceViewLabel}
+                </span>
+              )}
+              <span className="text-xs text-muted">当前同步分组：{currentServiceGroup}</span>
             </div>
           </section>
 
-          <section className="mb-5 grid gap-4 lg:grid-cols-4 md:grid-cols-2">
+          <section className="mb-4 grid gap-4 lg:grid-cols-4 md:grid-cols-2">
             <SummaryCard
               label="当前通道"
               value={currentSnapshot ? extractAuditChannelName(currentSnapshot.channel) : '--'}
               hint={currentSnapshot?.channel || '未选定通道'}
             />
             <SummaryCard
-              label="服务类型"
-              value={SERVICE_TAB_LABELS[selectedService]}
-              hint={currentSnapshot?.service || '以同步快照为准'}
+              label="当前状态"
+              value={currentSnapshot ? <SnapshotStatusBadge snapshot={currentSnapshot} compact /> : '--'}
+              hint={currentSnapshot?.channelTypeLabel || '以同步快照为准'}
             />
             <SummaryCard
               label="模型数量"
@@ -481,34 +482,46 @@ export default function ProviderPage() {
               hint={selectedModel === 'all' ? '当前通道全部模型' : selectedModel}
             />
             <SummaryCard
-              label="最近样本"
-              value={String(diagnosticSummary.usable)}
-              hint={`401失败 ${diagnosticSummary.failedAuth} / 请求失败 ${diagnosticSummary.failedRequest}`}
+              label="同步分组"
+              value={currentServiceGroup}
+              hint={`当前服务视图：${currentServiceViewLabel}`}
             />
           </section>
 
-          <section className="mb-4 grid gap-4 md:grid-cols-3">
-            <FilterField
-              label="来源"
-              value={selectedSource}
-              onChange={(value) => updateParam(setSearchParams, searchParams, { source: value === 'all' ? undefined : value, channel: undefined, model: undefined })}
-              options={sourceOptions.map((option) => ({
-                value: option,
-                label: option === 'all' ? '全部来源' : SOURCE_META[option as Exclude<SourceKey, 'all'>].label,
-              }))}
-            />
-            <FilterField
-              label="通道"
-              value={selectedChannel}
-              onChange={(value) => updateParam(setSearchParams, searchParams, { channel: value, model: undefined })}
-              options={channelOptions}
-            />
-            <FilterField
-              label="模型"
-              value={selectedModel}
-              onChange={(value) => updateParam(setSearchParams, searchParams, { model: value === 'all' ? undefined : value })}
-              options={[{ value: 'all', label: '全部模型' }, ...modelOptions.map((model) => ({ value: model, label: model }))]}
-            />
+          <section className="mb-4 rounded-2xl border border-default/70 bg-surface/55 px-4 py-3 text-sm text-secondary">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <span>最近有效样本 {diagnosticSummary.usable}</span>
+              <span>401失败 {diagnosticSummary.failedAuth}</span>
+              <span>请求失败 {diagnosticSummary.failedRequest}</span>
+              <span>其他 {diagnosticSummary.pending}</span>
+            </div>
+          </section>
+
+          <section className="mb-4 rounded-2xl border border-default/70 bg-surface/55 px-4 py-4">
+            <div className="mb-3 text-sm font-semibold text-primary">筛选当前详情</div>
+            <div className="grid gap-4 md:grid-cols-3">
+              <FilterField
+                label="来源"
+                value={selectedSource}
+                onChange={(value) => updateParam(setSearchParams, searchParams, { source: value === 'all' ? undefined : value, channel: undefined, model: undefined })}
+                options={sourceOptions.map((option) => ({
+                  value: option,
+                  label: option === 'all' ? '全部来源' : SOURCE_META[option as Exclude<SourceKey, 'all'>].label,
+                }))}
+              />
+              <FilterField
+                label="通道"
+                value={selectedChannel}
+                onChange={(value) => updateParam(setSearchParams, searchParams, { channel: value, model: undefined })}
+                options={channelOptions}
+              />
+              <FilterField
+                label="模型"
+                value={selectedModel}
+                onChange={(value) => updateParam(setSearchParams, searchParams, { model: value === 'all' ? undefined : value })}
+                options={[{ value: 'all', label: '全部模型' }, ...modelOptions.map((model) => ({ value: model, label: model }))]}
+              />
+            </div>
           </section>
 
           {showProbeWarning && (
@@ -525,15 +538,20 @@ export default function ProviderPage() {
             </section>
           )}
 
-          <section className="mb-4 rounded-xl border border-default/70 bg-surface/60 px-4 py-3 text-sm text-secondary">
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-              <LegendChip icon={<Sparkles size={14} className="text-cyan-300" />} label="董推" />
-              <LegendChip icon={<Flame size={14} className="text-orange-300" />} label="rpdiag 直连基准" />
-              <LegendChip icon={<ChannelTypeIcon channel="O-demo" />} label="官方直连" />
-              <LegendChip icon={<ChannelTypeIcon channel="M-demo" />} label="混合" />
-              <LegendChip icon={<ChannelTypeIcon channel="R-demo" />} label="逆向" />
-              <LegendChip icon={<ChannelTypeIcon channel="X-demo" />} label="未知" />
-              <LegendChip icon={<CircleHelp size={14} className="text-slate-300" />} label="用户提交" />
+          <section className="mb-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-primary">模型状态</h2>
+                <p className="mt-1 text-sm text-secondary">
+                  当前表格按模型展开，展示 `new-api` 同步状态、最近检测结果和可用率补充指标。
+                </p>
+              </div>
+              {currentSourceMeta ? (
+                <div className="inline-flex items-center gap-2 rounded-full border border-default/70 bg-surface/70 px-3 py-1 text-xs text-secondary">
+                  {currentSourceMeta.icon}
+                  <span>{currentSnapshot?.channelTypeLabel || currentSourceMeta.label}</span>
+                </div>
+              ) : null}
             </div>
           </section>
 
@@ -657,8 +675,6 @@ export default function ProviderPage() {
               当前 rpdiag 质量索引为空，模型已展开显示，但质量分与趋势暂无可用数据。
             </div>
           )}
-
-          <Footer />
         </div>
       </div>
     </>
@@ -697,16 +713,7 @@ function FilterField({
   );
 }
 
-function LegendChip({ icon, label }: { icon: React.ReactNode; label: string }) {
-  return (
-    <span className="inline-flex items-center gap-1.5 text-secondary">
-      {icon}
-      <span>{label}</span>
-    </span>
-  );
-}
-
-function SummaryCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function SummaryCard({ label, value, hint }: { label: string; value: React.ReactNode; hint?: string }) {
   return (
     <div className="rounded-xl border border-default/70 bg-surface/70 px-4 py-4">
       <div className="text-sm text-secondary">{label}</div>
@@ -783,19 +790,22 @@ function LatestAttemptStatusBadge({ status }: { status: string }) {
   return <span className={`inline-flex rounded-md px-2 py-0.5 font-semibold ${className}`}>{label}</span>;
 }
 
-function SnapshotStatusBadge({ snapshot }: { snapshot: AuditChannelSnapshot }) {
+function SnapshotStatusBadge({ snapshot, compact = false }: { snapshot: AuditChannelSnapshot; compact?: boolean }) {
   const rawStatus = typeof snapshot.raw?.Status === 'number' ? snapshot.raw.Status : null;
+  const className = compact
+    ? 'inline-flex rounded-full px-2.5 py-1 text-xs font-semibold'
+    : 'inline-flex rounded-full px-3 py-1 text-sm font-semibold';
   if (snapshot.enabled) {
-    return <span className="inline-flex rounded-full bg-emerald-500/15 px-3 py-1 text-sm font-semibold text-emerald-300">已启用</span>;
+    return <span className={`${className} bg-emerald-500/15 text-emerald-300`}>已启用</span>;
   }
   if (rawStatus != null) {
     return (
-      <span className="inline-flex rounded-full bg-slate-500/15 px-3 py-1 text-sm font-semibold text-slate-300">
+      <span className={`${className} bg-slate-500/15 text-slate-300`}>
         {`已禁用(S${rawStatus})`}
       </span>
     );
   }
-  return <span className="inline-flex rounded-full bg-slate-500/15 px-3 py-1 text-sm font-semibold text-slate-300">已停用</span>;
+  return <span className={`${className} bg-slate-500/15 text-slate-300`}>已停用</span>;
 }
 
 function AvailabilityBadge({ value, enabled }: { value: number | null; enabled: boolean }) {
@@ -922,6 +932,12 @@ function formatDateTime(unixSeconds: number): string {
 }
 
 function inferSourceKey(snapshot: AuditChannelSnapshot): SourceKey {
+  const typed = (snapshot.channelType || '').toLowerCase();
+  if (typed === 'official') return 'official';
+  if (typed === 'reverse') return 'reverse';
+  if (typed === 'mixed') return 'mixed';
+  if (typed === 'unknown') return 'unknown';
+
   const type = parseChannelType(snapshot.channel);
   if (type === 'official') return 'official';
   if (type === 'reverse') return 'reverse';
