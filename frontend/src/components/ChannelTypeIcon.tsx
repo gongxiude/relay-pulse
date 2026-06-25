@@ -14,6 +14,15 @@ export function parseChannelType(channel?: string | null): ChannelType | null {
   return 'unknown';
 }
 
+export function normalizeChannelType(channelType?: string | null): ChannelType | null {
+  if (!channelType) return null;
+  if (channelType === 'official') return 'official';
+  if (channelType === 'reverse') return 'reverse';
+  if (channelType === 'mixed') return 'mixed';
+  if (channelType === 'unknown') return 'unknown';
+  return null;
+}
+
 // Solid five-pointed star (official/certified)
 function OfficialIcon() {
   return (
@@ -62,12 +71,13 @@ function UnknownIcon() {
 
 interface ChannelTypeIconProps {
   channel?: string | null;
+  channelType?: string | null;
 }
 
 /** Renders a channel type icon based on O-/R-/M- prefix. Unrecognized formats show unknown icon. */
-export function ChannelTypeIcon({ channel }: ChannelTypeIconProps) {
+export function ChannelTypeIcon({ channel, channelType }: ChannelTypeIconProps) {
   const { t } = useTranslation();
-  const type = parseChannelType(channel);
+  const type = normalizeChannelType(channelType) || parseChannelType(channel);
   if (!type) return null;
 
   const label = t(`table.channelType.${type}`);

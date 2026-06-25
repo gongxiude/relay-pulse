@@ -34,6 +34,8 @@ storage:
 # ============================================
 # 监测任务配置（生产环境示例）
 # ============================================
+# new-api 只读审计接入使用 NEWAPI_BASE_URL / NEWAPI_ACCESS_TOKEN / NEWAPI_USER_ID 环境变量，
+# 不在生产 YAML 中保存凭据。
 # ⚠️ 重要提示：
 # 1. 所有 api_key 应通过环境变量覆盖（MONITOR_<PROVIDER>_<SERVICE>_API_KEY）
 # 2. category 和 sponsor 为必填字段

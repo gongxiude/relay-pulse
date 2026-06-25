@@ -19,6 +19,17 @@ func (c *AppConfig) applyEnvOverrides() {
 		c.PublicBaseURL = envBaseURL
 	}
 
+	// new-api 只读接入环境变量覆盖
+	if envBaseURL := os.Getenv("NEWAPI_BASE_URL"); envBaseURL != "" {
+		c.NewAPI.BaseURL = envBaseURL
+	}
+	if envToken := os.Getenv("NEWAPI_ACCESS_TOKEN"); envToken != "" {
+		c.NewAPI.AccessToken = envToken
+	}
+	if envUserID := os.Getenv("NEWAPI_USER_ID"); envUserID != "" {
+		c.NewAPI.UserID = envUserID
+	}
+
 	// 存储配置环境变量覆盖
 	if envType := os.Getenv("MONITOR_STORAGE_TYPE"); envType != "" {
 		c.Storage.Type = envType

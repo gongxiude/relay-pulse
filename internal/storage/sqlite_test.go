@@ -86,7 +86,7 @@ func columnNames(t *testing.T, db *sql.DB, table string) map[string]bool {
 func TestInit_TablesAndIndexes(t *testing.T) {
 	store := newTestStore(t)
 
-	for _, tbl := range []string{"probe_history", "service_states", "status_events", "channel_states"} {
+	for _, tbl := range []string{"probe_history", "service_states", "status_events", "channel_states", "newapi_channel_snapshots", "newapi_log_sync_cursors", "newapi_logs", "audit_targets", "diagnostic_runs", "diagnostic_steps", "diagnostic_scores"} {
 		if !sqliteObjectExists(t, store.db, "table", tbl) {
 			t.Errorf("expected table %q to exist", tbl)
 		}

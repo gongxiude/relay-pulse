@@ -27,6 +27,7 @@
 
 - **💸 真实 API 探测** - 消耗真实 Token，拒绝虚假繁荣
 - **📊 可视化矩阵** - 24h/7d/30d 可用率热力图，一眼看穿服务质量
+- **🧪 new-api 只读审计** - 读取渠道与生产日志，生成目标、排名、compare 证据页
 - **🔄 配置热更新** - 基于 fsnotify，修改配置无需重启
 - **💾 多存储后端** - SQLite（单机）/ PostgreSQL（K8s）
 - **🐳 云原生友好** - 极小 Docker 镜像，支持水平扩展
@@ -83,6 +84,37 @@ go run cmd/server/main.go
 > ⚠️ 首次构建或前端更新后**必须**先跑 `./scripts/setup-dev.sh`，它会把 `frontend/dist` 复制到 `internal/api/frontend/dist`（`//go:embed` 需要的路径，不支持符号链接）。跳过会报 `pattern frontend/dist: no matching files found`。详见 [CONTRIBUTING.md](CONTRIBUTING.md#首次运行)。
 
 **👨‍💻 开发者指南**：[CONTRIBUTING.md](CONTRIBUTING.md)
+
+## new-api 只读审计
+
+RelayPulse 现在支持把 `new-api` 作为只读外部审计源使用：
+
+- 通过 `NEWAPI_BASE_URL`、`NEWAPI_ACCESS_TOKEN`、`NEWAPI_USER_ID` 读取 `new-api`
+- 自动同步渠道、模型、模型映射、启停状态和生产日志
+- 自动展开 `服务商 + 渠道 + 模型` 审计目标
+- 提供 `/audit`、`/audit/ranking`、`/audit/targets`、`/audit/submit`、`/audit/compare/:runId`
+
+第一版约束：
+
+- 只读，不连接 `new-api` 数据库
+- 不写回 `new-api`
+- 不自动切换主力、备选、兜底
+
+最小运行方式：
+
+```bash
+export NEWAPI_BASE_URL=https://new-api.example.com
+export NEWAPI_ACCESS_TOKEN=your-token
+export NEWAPI_USER_ID=1
+
+go run ./cmd/server config.yaml
+```
+
+启动后访问：
+
+- `http://localhost:8080/audit`
+- `http://localhost:8080/api/audit/newapi/sync/status`
+- `http://localhost:8080/api/audit/ranking?window=24h`
 
 ## 📖 文档导航
 
@@ -173,6 +205,23 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/events/latest
 
 # 收录内联探测
 curl -X POST http://localhost:8080/api/onboarding/test  # 内联探测测试
+
+# new-api 审计状态
+curl http://localhost:8080/api/audit/newapi/sync/status
+
+# new-api 生产排名
+curl "http://localhost:8080/api/audit/ranking?window=24h"
+
+# 提交一次 quick-probe 诊断
+curl -X POST http://localhost:8080/api/audit/diagnostics \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "demo",
+    "service": "openai",
+    "channel": "101:demo",
+    "model": "gpt-5-mini",
+    "request_model": "gpt-5-mini"
+  }'
 ```
 
 **时间窗口说明**：API 使用**滑动窗口**设计，`period=24h` 返回"从当前时刻倒推 24 小时"的数据。这意味着：

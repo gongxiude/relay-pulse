@@ -85,6 +85,20 @@ func (c *AppConfig) validateResolvedModelConstraints() error {
 	return nil
 }
 
+// validateNewAPIConfig 验证 new-api 只读接入配置。
+func (c *AppConfig) validateNewAPIConfig() error {
+	if strings.TrimSpace(c.NewAPI.BaseURL) == "" {
+		return fmt.Errorf("newapi.base_url 不能为空，请通过 NEWAPI_BASE_URL 设置")
+	}
+	if strings.TrimSpace(c.NewAPI.AccessToken) == "" {
+		return fmt.Errorf("newapi.access_token 不能为空，请通过 NEWAPI_ACCESS_TOKEN 设置")
+	}
+	if strings.TrimSpace(c.NewAPI.UserID) == "" {
+		return fmt.Errorf("newapi.user_id 不能为空，请通过 NEWAPI_USER_ID 设置")
+	}
+	return nil
+}
+
 // ValidateFinal 检查环境变量覆盖、模板解析、继承和 Normalize 之后的最终配置。
 // Phase 1: 仅返回告警项，由调用方记录日志，不阻断启动或热更新。
 func (c *AppConfig) validateFinal() []error {

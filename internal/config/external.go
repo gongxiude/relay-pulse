@@ -25,6 +25,45 @@ type GitHubConfig struct {
 	TimeoutDuration time.Duration `yaml:"-" json:"-"`
 }
 
+// NewAPIConfig new-api 只读接入配置。
+// 凭据只允许来自环境变量：NEWAPI_BASE_URL, NEWAPI_ACCESS_TOKEN, NEWAPI_USER_ID。
+type NewAPIConfig struct {
+	BaseURL             string `yaml:"-" json:"base_url"`
+	AccessToken         string `yaml:"-" json:"-"`
+	UserID              string `yaml:"-" json:"-"`
+	Timeout             string `yaml:"timeout" json:"timeout"`
+	ChannelSyncInterval string `yaml:"channel_sync_interval" json:"channel_sync_interval"`
+	LogSyncInterval     string `yaml:"log_sync_interval" json:"log_sync_interval"`
+	PageSize            int    `yaml:"page_size" json:"page_size"`
+}
+
+// normalize 规范化 new-api 配置。
+func (c *NewAPIConfig) normalize() error {
+	if strings.TrimSpace(c.Timeout) == "" {
+		c.Timeout = "10s"
+	}
+	d, err := time.ParseDuration(strings.TrimSpace(c.Timeout))
+	if err != nil || d <= 0 {
+		return fmt.Errorf("newapi.timeout 无效: %q", c.Timeout)
+	}
+	if strings.TrimSpace(c.ChannelSyncInterval) == "" {
+		c.ChannelSyncInterval = "5m"
+	}
+	if d, err := time.ParseDuration(strings.TrimSpace(c.ChannelSyncInterval)); err != nil || d <= 0 {
+		return fmt.Errorf("newapi.channel_sync_interval 无效: %q", c.ChannelSyncInterval)
+	}
+	if strings.TrimSpace(c.LogSyncInterval) == "" {
+		c.LogSyncInterval = "1m"
+	}
+	if d, err := time.ParseDuration(strings.TrimSpace(c.LogSyncInterval)); err != nil || d <= 0 {
+		return fmt.Errorf("newapi.log_sync_interval 无效: %q", c.LogSyncInterval)
+	}
+	if c.PageSize <= 0 {
+		c.PageSize = 100
+	}
+	return nil
+}
+
 // Normalize 规范化 GitHub 配置（默认值、环境变量覆盖、基础校验）
 func (c *GitHubConfig) normalize() error {
 	// token：环境变量优先覆盖

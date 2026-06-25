@@ -3,6 +3,11 @@
 # 完整字段与调优项（interval / slow_latency / retry / boards / events /
 # annotations / storage.postgres / onboarding 等）见 docs/user/config.md
 # 可用模板见 templates/ 目录（cc-haiku-arith / cx-codex-arith / gm-flash-arith ...）
+#
+# new-api 只读审计凭据固定通过环境变量注入：
+#   NEWAPI_BASE_URL
+#   NEWAPI_ACCESS_TOKEN
+#   NEWAPI_USER_ID
 
 monitors:
   - provider: "88code"

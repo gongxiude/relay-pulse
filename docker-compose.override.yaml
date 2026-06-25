@@ -1,0 +1,11 @@
+services:
+  monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: dev
+        GIT_COMMIT: local
+        BUILD_TIME: local
+    env_file:
+      - .env

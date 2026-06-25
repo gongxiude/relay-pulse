@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"monitor/internal/events"
 	"monitor/internal/identity"
 	"monitor/internal/logger"
+	"monitor/internal/newapi"
 	"monitor/internal/onboarding"
 	"monitor/internal/probe"
 	"monitor/internal/scheduler"
@@ -99,6 +101,78 @@ func announcementsConfigChanged(oldCfg, newCfg *config.AppConfig) bool {
 		oldCfg.GitHub.TimeoutDuration != newCfg.GitHub.TimeoutDuration
 }
 
+type newAPIAuditStore interface {
+	ReplaceAuditTargets([]storage.AuditTarget) error
+	SaveChannelSnapshot(*storage.ChannelSnapshot) error
+	GetLogSyncCursor(string) (*storage.LogSyncCursor, error)
+	UpsertLogSyncCursor(*storage.LogSyncCursor) error
+}
+
+func parseNewAPISyncInterval(raw, fallback string) time.Duration {
+	if strings.TrimSpace(raw) == "" {
+		raw = fallback
+	}
+	d, err := time.ParseDuration(strings.TrimSpace(raw))
+	if err != nil || d <= 0 {
+		return mustParseDuration(fallback)
+	}
+	return d
+}
+
+func mustParseDuration(raw string) time.Duration {
+	d, err := time.ParseDuration(strings.TrimSpace(raw))
+	if err != nil || d <= 0 {
+		return time.Minute
+	}
+	return d
+}
+
+func startNewAPISyncLoops(ctx context.Context, cfg *config.AppConfig, store newAPIAuditStore) {
+	client := newapi.NewClient(cfg.NewAPI.BaseURL, cfg.NewAPI.AccessToken, cfg.NewAPI.UserID, newapi.WithTimeout(mustParseDuration(cfg.NewAPI.Timeout)))
+
+	channelInterval := parseNewAPISyncInterval(cfg.NewAPI.ChannelSyncInterval, "5m")
+	logInterval := parseNewAPISyncInterval(cfg.NewAPI.LogSyncInterval, "1m")
+
+	go func() {
+		ticker := time.NewTicker(channelInterval)
+		defer ticker.Stop()
+		for {
+			if _, err := newapi.SyncChannels(ctx, client, store); err != nil {
+				logger.Warn("main", "new-api 渠道同步失败", "error", err)
+			} else {
+				logger.Info("main", "new-api 渠道同步完成")
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+
+	go func() {
+		ticker := time.NewTicker(logInterval)
+		defer ticker.Stop()
+		for {
+			metrics, err := newapi.SyncLogs(ctx, client, store)
+			if err != nil {
+				logger.Warn("main", "new-api 日志同步失败", "error", err)
+			} else {
+				logger.Info("main", "new-api 日志同步完成",
+					"24h_total", metrics.Windows["24h"].Total,
+					"24h_success", metrics.Windows["24h"].Success,
+					"24h_error", metrics.Windows["24h"].Error,
+					"24h_timeout", metrics.Windows["24h"].Timeout)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
 func main() {
 	// 打印版本信息
 	logger.Info("main", "Relay Pulse Monitor 启动",
@@ -110,6 +184,12 @@ func main() {
 	configFile := "config.yaml"
 	if len(os.Args) > 1 {
 		configFile = os.Args[1]
+	}
+
+	// 尝试从配置目录加载 .env，保证本地开发和 Docker 场景可直接使用环境变量注入
+	if err := config.LoadDotenvFromConfigDir(configFile, true); err != nil {
+		logger.Error("main", "加载 .env 失败", "error", err)
+		os.Exit(1)
 	}
 
 	// 创建配置加载器
@@ -158,6 +238,16 @@ func main() {
 	// 创建上下文（用于优雅关闭）
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// 启动 new-api 只读同步器（渠道 + 日志）
+	if cfg.NewAPI.BaseURL != "" {
+		if syncStore, ok := store.(newAPIAuditStore); ok {
+			startNewAPISyncLoops(ctx, cfg, syncStore)
+			logger.Info("main", "new-api 只读同步器已启动")
+		} else {
+			logger.Warn("main", "当前存储不支持 new-api 同步器")
+		}
+	}
 
 	// 启动历史数据清理任务
 	var cleaner *storage.Cleaner

@@ -22,6 +22,7 @@ import { hasAnyAnnotation, hasAnyAnnotationInList } from '../utils/annotationUti
 import { formatPriceRatioStructured } from '../utils/format';
 import { getServiceIconComponent } from './ServiceIcon';
 import { lookupRpdiagScore } from '../hooks/useRpdiagScores';
+import { buildProviderDetailHref } from '../utils/auditChannelAdapter';
 import type { ProcessedMonitorData, SortConfig } from '../types';
 import type { RpdiagModelScore, RpdiagScore, RpdiagScoresResponse } from '../types/monitor';
 
@@ -43,16 +44,18 @@ const getCachedServiceIcon = (serviceType: string) => {
 // 通道单元格组件（带自定义 CSS tooltip，替代原生 title 属性）
 interface ChannelCellProps {
   channel?: string;
+  rawChannelName?: string;
+  icon?: React.ReactNode;
   probeUrl?: string;
   templateName?: string;
   coldReason?: string;
   className?: string;
 }
 
-function ChannelCell({ channel, probeUrl, templateName, coldReason, className = '' }: ChannelCellProps) {
+function ChannelCell({ channel, rawChannelName, icon, probeUrl, templateName, coldReason, className = '' }: ChannelCellProps) {
   const { t } = useTranslation();
-  const channelType = parseChannelType(channel);
-  const hasTooltip = !!(channelType || probeUrl || templateName || coldReason);
+  const channelType = parseChannelType(rawChannelName || channel);
+  const hasTooltip = !!(channelType || rawChannelName || probeUrl || templateName || coldReason);
   const triggerRef = useRef<HTMLSpanElement>(null);
   const leaveTimer = useRef<number>(0);
   const [hover, setHover] = useState(false);
@@ -92,7 +95,7 @@ function ChannelCell({ channel, probeUrl, templateName, coldReason, className = 
 
   const channelContent = (
     <>
-      <ChannelTypeIcon channel={channel} />
+      {icon || <ChannelTypeIcon channel={rawChannelName || channel} />}
       <span className="min-w-0 truncate">{channel || '-'}</span>
     </>
   );
@@ -118,6 +121,12 @@ function ChannelCell({ channel, probeUrl, templateName, coldReason, className = 
           onMouseLeave={handleLeave}
         >
           <span className="flex flex-col gap-1">
+            {rawChannelName && (
+              <span className="flex flex-col">
+                <span className="text-muted text-[10px]">原始渠道名</span>
+                <span className="text-primary text-[11px] break-all">{rawChannelName}</span>
+              </span>
+            )}
             {channelType && (
               <span className="flex flex-col">
                 <span className="text-muted text-[10px]">{t('table.channelTooltip.channelType')}</span>
@@ -178,6 +187,10 @@ interface StatusTableProps {
   showCategoryTag?: boolean; // 是否显示分类标签（推荐/公益），默认 true
   showProvider?: boolean;    // 是否显示服务商名称，默认 true
   showSponsor?: boolean;     // 是否显示赞助者信息，默认 true
+  showModel?: boolean;       // 是否显示模型列，默认 true
+  showListedDays?: boolean;  // 是否显示收录天数，默认 true
+  showLastCheck?: boolean;   // 是否显示最近检测，默认 true
+  showQuality?: boolean;     // 是否显示质量列，默认 true
   isFavorite: (id: string) => boolean;  // 检查是否已收藏
   onToggleFavorite: (id: string) => void; // 切换收藏状态
   onSort: (key: string) => void;
@@ -192,6 +205,22 @@ interface StatusTableProps {
   rpdiagEnabled?: boolean;
   /** runtime 价格列隐藏开关（meta.hide_price_column 派生）。默认 false（显示）。 */
   hidePriceColumn?: boolean;
+}
+
+function renderNewApiStatusBadge(item: Pick<ProcessedMonitorData, 'newApiStatusLabel' | 'newApiStatusCode'>) {
+  const label = item.newApiStatusLabel?.trim();
+  if (!label) return <span className="text-muted text-xs">-</span>;
+
+  const enabled = item.newApiStatusCode === 1;
+  const className = enabled
+    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+    : 'border-slate-500/30 bg-slate-500/10 text-slate-300';
+
+  return (
+    <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium whitespace-nowrap ${className}`}>
+      {label}
+    </span>
+  );
 }
 
 // rpdiag 质量分单元格：所有 model 的 5 点 sparkline (30d 均 / 7d 均 / 最近 3
@@ -545,6 +574,10 @@ interface MobileRowProps {
   enableAnnotations: boolean;
   showProvider: boolean;
   showSponsor: boolean;
+  showModel: boolean;
+  showListedDays: boolean;
+  showLastCheck: boolean;
+  showQuality: boolean;
   useLatencyGradient: boolean;
   isFavorite: (id: string) => boolean;
   onToggleFavorite: (id: string) => void;
@@ -554,7 +587,7 @@ interface MobileRowProps {
   rpdiagEnabled: boolean;
 }
 
-function MobileRow({ index, style, data, slowLatencyMs, enableAnnotations, showProvider, showSponsor, useLatencyGradient, isFavorite, onToggleFavorite, onBlockHover, onBlockLeave, rpdiagScores, rpdiagEnabled }: RowComponentProps<MobileRowProps>) {
+function MobileRow({ index, style, data, slowLatencyMs, enableAnnotations, showProvider, showSponsor, showModel, showListedDays, showLastCheck, showQuality, useLatencyGradient, isFavorite, onToggleFavorite, onBlockHover, onBlockLeave, rpdiagScores, rpdiagEnabled }: RowComponentProps<MobileRowProps>) {
   const item = data[index];
   return (
     <div style={style}>
@@ -565,12 +598,15 @@ function MobileRow({ index, style, data, slowLatencyMs, enableAnnotations, showP
           enableAnnotations={enableAnnotations}
           showProvider={showProvider}
           showSponsor={showSponsor}
+          showModel={showModel}
+          showListedDays={showListedDays}
+          showLastCheck={showLastCheck}
           useLatencyGradient={useLatencyGradient}
           isFavorite={isFavorite(item.id)}
           onToggleFavorite={() => onToggleFavorite(item.id)}
           onBlockHover={onBlockHover}
           onBlockLeave={onBlockLeave}
-          rpdiagScore={rpdiagEnabled ? lookupRpdiagScore(rpdiagScores, item.providerId, item.serviceType, item.channelName || item.channel) : undefined}
+          rpdiagScore={rpdiagEnabled && showQuality ? lookupRpdiagScore(rpdiagScores, item.providerId, item.serviceType, item.channelName || item.channel) : undefined}
         />
       </div>
     </div>
@@ -584,6 +620,9 @@ function MobileListItem({
   enableAnnotations = true,
   showProvider = true,
   showSponsor = true,
+  showModel = true,
+  showListedDays = true,
+  showLastCheck = true,
   useLatencyGradient = false,
   isFavorite,
   onToggleFavorite,
@@ -596,6 +635,9 @@ function MobileListItem({
   enableAnnotations?: boolean;
   showProvider?: boolean;
   showSponsor?: boolean;
+  showModel?: boolean;
+  showListedDays?: boolean;
+  showLastCheck?: boolean;
   useLatencyGradient?: boolean;
   isFavorite: boolean;
   onToggleFavorite: () => void;
@@ -691,14 +733,16 @@ function MobileListItem({
               </span>
               {item.channel && (
                 <ChannelCell
-                  channel={item.channelName || item.channel}
+                  channel={item.auditChannelTypeLabel || item.channelName || item.channel}
+                  rawChannelName={item.channelName || item.channel}
+                  icon={<ChannelTypeIcon channelType={item.auditChannelType} />}
                   probeUrl={item.probeUrl}
                   templateName={item.templateName}
                   coldReason={item.coldReason}
                   className="text-muted truncate"
                 />
               )}
-              {item.modelEntries && item.modelEntries.length > 0 && (() => {
+              {showModel && item.modelEntries && item.modelEntries.length > 0 && (() => {
                 const models = getModelDisplayList(item.modelEntries);
                 if (models.length === 0) return null;
                 return (
@@ -711,7 +755,7 @@ function MobileListItem({
                 );
               })()}
               {/* 收录时间 */}
-              {item.listedDays != null && (
+              {showListedDays && item.listedDays != null && (
                 <span className="text-[10px] text-muted font-mono flex-shrink-0">
                   {item.listedDays}d
                 </span>
@@ -735,21 +779,23 @@ function MobileListItem({
             <QualityScoreCell score={rpdiagScore} compact />
           )}
           {/* 时间和延迟（总是显示） */}
-          <div className="flex items-center gap-2 text-[10px] text-muted font-mono">
-            {item.lastCheckTimestamp && (
-              <span>
-                {new Date(item.lastCheckTimestamp * 1000).toLocaleString(i18n.language, {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })}
-              </span>
-            )}
-            {item.lastCheckLatency !== undefined && (
-              <span style={{ color: item.currentStatus === 'UNAVAILABLE' ? 'hsl(var(--text-muted))' : latencyToColor(item.lastCheckLatency, item.slowLatencyMs ?? slowLatencyMs) }}>
-                {item.lastCheckLatency}ms
-              </span>
-            )}
-          </div>
+          {showLastCheck && (
+            <div className="flex items-center gap-2 text-[10px] text-muted font-mono">
+              {item.lastCheckTimestamp && (
+                <span>
+                  {new Date(item.lastCheckTimestamp * 1000).toLocaleString(i18n.language, {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
+                </span>
+              )}
+              {item.lastCheckLatency !== undefined && (
+                <span style={{ color: item.currentStatus === 'UNAVAILABLE' ? 'hsl(var(--text-muted))' : latencyToColor(item.lastCheckLatency, item.slowLatencyMs ?? slowLatencyMs) }}>
+                  {item.lastCheckLatency}ms
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -778,6 +824,8 @@ function MobileSortMenu({
   isInitialSort,
   onSort,
   hidePriceColumn,
+  showListedDays,
+  showLastCheck,
   rpdiagScoresLoaded,
   rpdiagEnabled,
 }: {
@@ -785,6 +833,8 @@ function MobileSortMenu({
   isInitialSort?: boolean;
   onSort: (key: string) => void;
   hidePriceColumn: boolean;
+  showListedDays: boolean;
+  showLastCheck: boolean;
   rpdiagScoresLoaded: boolean;
   rpdiagEnabled: boolean;
 }) {
@@ -793,10 +843,10 @@ function MobileSortMenu({
   const sortOptions: Array<{ key: string; label: string; disabled?: boolean }> = [
     { key: 'providerName', label: t('table.sorting.provider') },
     { key: 'uptime', label: t('table.sorting.uptime') },
-    { key: 'lastCheck', label: t('table.sorting.lastCheck') },
+    ...(showLastCheck ? [{ key: 'lastCheck', label: t('table.sorting.lastCheck') }] : []),
     { key: 'serviceType', label: t('table.sorting.service') },
     ...(hidePriceColumn ? [] : [{ key: 'priceRatio', label: t('table.sorting.priceRatio') }]),
-    { key: 'listedDays', label: t('table.sorting.listedDays') },
+    ...(showListedDays ? [{ key: 'listedDays', label: t('table.sorting.listedDays') }] : []),
     // rpdiag 关闭时移动端不提供"按质量排序"（与桌面端隐藏质量列一致）
     ...(rpdiagEnabled ? [{ key: 'qualityScore', label: t('table.sorting.quality'), disabled: !rpdiagScoresLoaded }] : []),
   ];
@@ -846,6 +896,10 @@ function StatusTableComponent({
   enableAnnotations = true,
   showProvider = true,
   showSponsor = true,
+  showModel = true,
+  showListedDays = true,
+  showLastCheck = true,
+  showQuality = true,
   isFavorite,
   onToggleFavorite,
   onSort,
@@ -882,7 +936,8 @@ function StatusTableComponent({
   const currentTimeRange = getTimeRanges(t).find((r) => r.id === timeRange);
   const useLatencyGradient = timeRange === '90m';
   // 质量列总开关：rpdiag 未启用（私有部署）时整列（表头 + 格子 + colgroup + 移动端排序项）消失
-  const showQualityColumn = rpdiagEnabled;
+  const showQualityColumn = rpdiagEnabled && showQuality;
+  const showNewApiStatusColumn = data.some((item) => item.newApiStatusLabel);
 
   // 移动端：虚拟滚动卡片列表视图
   if (isMobile) {
@@ -899,6 +954,8 @@ function StatusTableComponent({
           isInitialSort={isInitialSort}
           onSort={onSort}
           hidePriceColumn={hidePriceColumn}
+          showListedDays={showListedDays}
+          showLastCheck={showLastCheck}
           rpdiagScoresLoaded={rpdiagScoresLoaded}
           rpdiagEnabled={showQualityColumn}
         />
@@ -908,7 +965,7 @@ function StatusTableComponent({
           rowHeight={MOBILE_ROW_HEIGHT}
           overscanCount={3}
           rowComponent={MobileRow}
-          rowProps={{ data, slowLatencyMs, enableAnnotations, showProvider, showSponsor, useLatencyGradient, isFavorite, onToggleFavorite, onBlockHover, onBlockLeave, rpdiagScores, rpdiagEnabled: showQualityColumn }}
+          rowProps={{ data, slowLatencyMs, enableAnnotations, showProvider, showSponsor, showModel, showListedDays, showLastCheck, showQuality, useLatencyGradient, isFavorite, onToggleFavorite, onBlockHover, onBlockLeave, rpdiagScores, rpdiagEnabled: showQualityColumn }}
         />
       </div>
     );
@@ -926,11 +983,12 @@ function StatusTableComponent({
           {showProvider && <col className="w-px" />}
           <col className="w-px" /> {/* service */}
           <col className="w-px" /> {/* channel */}
-          <col className="w-px" /> {/* model */}
+          {showModel && <col className="w-px" />} {/* model */}
+          {showNewApiStatusColumn && <col className="w-px" />} {/* new-api status */}
           {!hidePriceColumn && <col className="w-px" />} {/* priceRatio */}
-          <col className="w-px" /> {/* listedDays */}
+          {showListedDays && <col className="w-px" />} {/* listedDays */}
           <col className="w-px" /> {/* uptime */}
-          <col className="w-px" /> {/* lastCheck */}
+          {showLastCheck && <col className="w-px" />} {/* lastCheck */}
           {showQualityColumn && <col className="w-px" />} {/* quality */}
           <col className="w-full" /> {/* trend */}
         </colgroup>
@@ -978,9 +1036,16 @@ function StatusTableComponent({
                 {t('table.headers.channel')} <SortIcon columnKey="channel" />
               </div>
             </th>
-            <th className="px-1.5 py-3 font-medium whitespace-nowrap">
-              {t('table.headers.model')}
-            </th>
+            {showModel && (
+              <th className="px-1.5 py-3 font-medium whitespace-nowrap">
+                {t('table.headers.model')}
+              </th>
+            )}
+            {showNewApiStatusColumn && (
+              <th className="px-1.5 py-3 font-medium whitespace-nowrap">
+                {t('table.headers.newApiStatus', '当前状态')}
+              </th>
+            )}
             {!hidePriceColumn && (
               <th
                 className="px-1.5 py-3 font-medium whitespace-nowrap cursor-pointer hover:text-accent transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none"
@@ -1008,21 +1073,23 @@ function StatusTableComponent({
                 </div>
               </th>
             )}
-            <th
-              className="px-1.5 py-3 font-medium whitespace-nowrap cursor-pointer hover:text-accent transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none"
-              onClick={() => onSort('listedDays')}
-              onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onSort('listedDays'))}
-              tabIndex={0}
-              role="button"
-            >
-              <div className="flex items-center">
-                <div className="flex flex-col leading-tight">
-                  <span>{t('table.headers.listedDaysLine1')}</span>
-                  <span className="text-[10px] opacity-50 font-normal">{t('table.headers.listedDaysLine2')}</span>
+            {showListedDays && (
+              <th
+                className="px-1.5 py-3 font-medium whitespace-nowrap cursor-pointer hover:text-accent transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none"
+                onClick={() => onSort('listedDays')}
+                onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onSort('listedDays'))}
+                tabIndex={0}
+                role="button"
+              >
+                <div className="flex items-center">
+                  <div className="flex flex-col leading-tight">
+                    <span>{t('table.headers.listedDaysLine1')}</span>
+                    <span className="text-[10px] opacity-50 font-normal">{t('table.headers.listedDaysLine2')}</span>
+                  </div>
+                  <SortIcon columnKey="listedDays" />
                 </div>
-                <SortIcon columnKey="listedDays" />
-              </div>
-            </th>
+              </th>
+            )}
             <th
               className="px-1.5 py-3 font-medium whitespace-nowrap cursor-pointer hover:text-accent transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none"
               onClick={() => onSort('uptime')}
@@ -1034,21 +1101,23 @@ function StatusTableComponent({
                 {t('table.headers.uptime')} <SortIcon columnKey="uptime" />
               </div>
             </th>
-            <th
-              className="px-1.5 py-3 font-medium whitespace-nowrap cursor-pointer hover:text-accent transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none"
-              onClick={() => onSort('lastCheck')}
-              onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onSort('lastCheck'))}
-              tabIndex={0}
-              role="button"
-            >
-              <div className="flex items-center">
-                <div className="flex flex-col leading-tight">
-                  <span>{t('table.headers.lastCheckLine1')}</span>
-                  <span className="text-[10px] opacity-50 font-normal">{t('table.headers.lastCheckLine2')}</span>
+            {showLastCheck && (
+              <th
+                className="px-1.5 py-3 font-medium whitespace-nowrap cursor-pointer hover:text-accent transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none"
+                onClick={() => onSort('lastCheck')}
+                onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onSort('lastCheck'))}
+                tabIndex={0}
+                role="button"
+              >
+                <div className="flex items-center">
+                  <div className="flex flex-col leading-tight">
+                    <span>{t('table.headers.lastCheckLine1')}</span>
+                    <span className="text-[10px] opacity-50 font-normal">{t('table.headers.lastCheckLine2')}</span>
+                  </div>
+                  <SortIcon columnKey="lastCheck" />
                 </div>
-                <SortIcon columnKey="lastCheck" />
-              </div>
-            </th>
+              </th>
+            )}
             {/* 质量列表头：rpdiag 关闭时整列隐藏；启用时未加载完成前置灰不响应排序，避免空数据触发的伪排序 */}
             {showQualityColumn && (
             <th
@@ -1111,6 +1180,10 @@ function StatusTableComponent({
             const ServiceIcon = getCachedServiceIcon(item.serviceType);
             const hasItemAnnotations = hasAnyAnnotation(item, { enableAnnotations });
             const pinnedBg = item.pinned ? sponsorLevelToPinnedBgClass(item.sponsorLevel) : '';
+            const detailHref = buildProviderDetailHref(
+              item,
+              LANGUAGE_PATH_MAP[i18n.language as SupportedLanguage],
+            );
             return (
             <tr
               key={item.id}
@@ -1134,7 +1207,13 @@ function StatusTableComponent({
                     <div className="flex flex-col gap-0 flex-1 min-w-0 max-w-[13rem]">
                       <div className="flex items-center gap-1.5">
                         <span className="font-medium text-primary text-sm leading-tight truncate">
-                          <ExternalLink href={item.providerUrl} inline requireConfirm>{item.providerName}</ExternalLink>
+                          {detailHref ? (
+                            <Link to={detailHref} className="hover:text-accent transition-colors">
+                              {item.providerName}
+                            </Link>
+                          ) : (
+                            item.providerName
+                          )}
                         </span>
                         {/* 收藏按钮：始终显示，未收藏时弱化 */}
                         <div className="flex-shrink-0">
@@ -1192,33 +1271,42 @@ function StatusTableComponent({
               </td>
               <td className="px-1.5 py-1 text-secondary text-xs">
                 <ChannelCell
-                  channel={item.channelName || item.channel}
+                  channel={item.auditChannelTypeLabel || item.channelName || item.channel}
+                  rawChannelName={item.channelName || item.channel}
+                  icon={<ChannelTypeIcon channelType={item.auditChannelType} />}
                   probeUrl={item.probeUrl}
                   templateName={item.templateName}
                   coldReason={item.coldReason}
                   className="max-w-[10rem]"
                 />
               </td>
-              <td className="px-1.5 py-1 text-secondary text-xs max-w-[14rem]">
-                {(() => {
-                  const models = getModelDisplayList(item.modelEntries);
-                  if (models.length === 0) return <span className="text-muted">-</span>;
-                  if (models.length === 1) {
+              {showModel && (
+                <td className="px-1.5 py-1 text-secondary text-xs max-w-[14rem]">
+                  {(() => {
+                    const models = getModelDisplayList(item.modelEntries);
+                    if (models.length === 0) return <span className="text-muted">-</span>;
+                    if (models.length === 1) {
+                      return (
+                        <span className="block truncate" title={getModelTooltip(item.modelEntries)}>
+                          {models[0]}
+                        </span>
+                      );
+                    }
                     return (
-                      <span className="block truncate" title={getModelTooltip(item.modelEntries)}>
-                        {models[0]}
-                      </span>
+                      <div className="flex flex-col gap-0.5" title={getModelTooltip(item.modelEntries)}>
+                        {models.map((m, i) => (
+                          <span key={i} className="block truncate">{m}</span>
+                        ))}
+                      </div>
                     );
-                  }
-                  return (
-                    <div className="flex flex-col gap-0.5" title={getModelTooltip(item.modelEntries)}>
-                      {models.map((m, i) => (
-                        <span key={i} className="block truncate">{m}</span>
-                      ))}
-                    </div>
-                  );
-                })()}
-              </td>
+                  })()}
+                </td>
+              )}
+              {showNewApiStatusColumn && (
+                <td className="px-1.5 py-1">
+                  {renderNewApiStatusBadge(item)}
+                </td>
+              )}
               {!hidePriceColumn && (
                 <td className="px-1.5 py-1 font-mono text-xs whitespace-nowrap">
                   {(() => {
@@ -1235,34 +1323,38 @@ function StatusTableComponent({
                   })()}
                 </td>
               )}
-              <td className="px-1.5 py-1 font-mono text-xs text-secondary whitespace-nowrap">
-                {item.listedDays != null ? `${item.listedDays}d` : '-'}
-              </td>
+              {showListedDays && (
+                <td className="px-1.5 py-1 font-mono text-xs text-secondary whitespace-nowrap">
+                  {item.listedDays != null ? `${item.listedDays}d` : '-'}
+                </td>
+              )}
               <td className="px-1.5 py-1 font-mono font-bold whitespace-nowrap">
                 <span style={{ color: availabilityToColor(item.uptime) }}>
                   {item.uptime >= 0 ? `${item.uptime}%` : '--'}
                 </span>
               </td>
-              <td className="px-1.5 py-1">
-                <div className="flex items-center gap-1.5">
-                  <StatusDot status={item.currentStatus} size="sm" />
-                  {item.lastCheckTimestamp ? (
-                    <div className="text-xs text-secondary font-mono flex flex-col gap-0.5">
-                      {item.lastCheckLatency !== undefined && (
-                        <span
-                          className="text-[10px] font-mono"
-                          style={{ color: item.currentStatus === 'UNAVAILABLE' ? 'hsl(var(--text-muted))' : latencyToColor(item.lastCheckLatency, item.slowLatencyMs ?? slowLatencyMs) }}
-                        >
-                          {item.lastCheckLatency}ms
-                        </span>
-                      )}
-                      <span className="text-[10px] text-muted">{new Date(item.lastCheckTimestamp * 1000).toLocaleString(i18n.language, { hour: '2-digit', minute: '2-digit' })}</span>
-                    </div>
-                  ) : (
-                    <span className="text-muted text-xs">-</span>
-                  )}
-                </div>
-              </td>
+              {showLastCheck && (
+                <td className="px-1.5 py-1">
+                  <div className="flex items-center gap-1.5">
+                    <StatusDot status={item.currentStatus} size="sm" />
+                    {item.lastCheckTimestamp ? (
+                      <div className="text-xs text-secondary font-mono flex flex-col gap-0.5">
+                        {item.lastCheckLatency !== undefined && (
+                          <span
+                            className="text-[10px] font-mono"
+                            style={{ color: item.currentStatus === 'UNAVAILABLE' ? 'hsl(var(--text-muted))' : latencyToColor(item.lastCheckLatency, item.slowLatencyMs ?? slowLatencyMs) }}
+                          >
+                            {item.lastCheckLatency}ms
+                          </span>
+                        )}
+                        <span className="text-[10px] text-muted">{new Date(item.lastCheckTimestamp * 1000).toLocaleString(i18n.language, { hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                    ) : (
+                      <span className="text-muted text-xs">-</span>
+                    )}
+                  </div>
+                </td>
+              )}
               {showQualityColumn && (
               <td className="px-1.5 py-1 whitespace-nowrap">
                 <QualityScoreCell score={lookupRpdiagScore(rpdiagScores, item.providerId, item.serviceType, item.channelName || item.channel)} />

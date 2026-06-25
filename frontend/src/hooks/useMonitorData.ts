@@ -368,6 +368,7 @@ export function useMonitorData({
     boardsEnabled,  // 板块功能开关
     boardsEnabledLoaded,  // 是否已从 API 获取板块开关状态
     boardCounts,    // 各板块通道数量
+    sponsorPinConfig,
     allMonitorIds,  // 全量监控项 ID（用于清理无效收藏）
     allMonitorIdsSupported, // 后端是否支持 all_monitor_ids（用于区分"空列表"和"不支持"）
     hidePriceColumn, // runtime 价格列隐藏开关（meta.hide_price_column 优先，缺失时回落 build-time）

@@ -48,13 +48,18 @@ func (l *Loader) Load(filename string) (*AppConfig, error) {
 		return nil, fmt.Errorf("合并外部 monitor 配置失败: %w", err)
 	}
 
+	// 应用环境变量覆盖
+	cfg.applyEnvOverrides()
+
 	// 验证配置
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("配置验证失败: %w", err)
 	}
 
-	// 应用环境变量覆盖
-	cfg.applyEnvOverrides()
+	// new-api 只读接入配置强校验（仅在加载入口执行，避免污染通用配置单测）
+	if err := cfg.validateNewAPIConfig(); err != nil {
+		return nil, fmt.Errorf("配置验证失败: %w", err)
+	}
 
 	// 解析模板引用
 	if err := cfg.resolveTemplates(configDir); err != nil {

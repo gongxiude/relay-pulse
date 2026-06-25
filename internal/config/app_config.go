@@ -99,6 +99,11 @@ type AppConfig struct {
 	// 存储配置
 	Storage StorageConfig `yaml:"storage" json:"storage"`
 
+	// ===== new-api 只读审计接入 =====
+
+	// new-api 接入配置：只允许通过环境变量注入凭据，不写回运行态配置。
+	NewAPI NewAPIConfig `yaml:"newapi" json:"newapi"`
+
 	// 公开访问的基础 URL（用于 SEO、sitemap 等）
 	// 默认: https://relaypulse.top
 	// 可通过环境变量 MONITOR_PUBLIC_BASE_URL 覆盖

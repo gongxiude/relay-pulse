@@ -12,6 +12,7 @@ import {
   ArrowRight,
 } from 'lucide-react';
 
+import { Header } from '../components/Header';
 import { LANGUAGE_PATH_MAP, type SupportedLanguage } from '../i18n';
 import { useRpdiagScores, lookupRpdiagScore } from '../hooks/useRpdiagScores';
 import { useMonitorData } from '../hooks/useMonitorData';
@@ -194,8 +195,11 @@ export default function DetectPage() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const langPrefix = LANGUAGE_PATH_MAP[i18n.language as SupportedLanguage];
-  const homePath = langPrefix ? `/${langPrefix}` : '/';
   const buildPath = (path: string) => (langPrefix ? `/${langPrefix}${path}` : path);
+  const headerStats = useMemo(
+    () => ({ total: 0, healthy: 0, issues: 0 }),
+    [],
+  );
 
   const problems = t('detect.what.items', { returnObjects: true }) as Array<{ t: string; d: string }>;
   const tactics = t('detect.tactics.items', { returnObjects: true }) as Array<{ name: string; how: string }>;
@@ -210,18 +214,9 @@ export default function DetectPage() {
       </Helmet>
 
       <div className="min-h-screen bg-page flex flex-col">
-        <header className="px-4 py-4 border-b border-default/50">
-          <div className="max-w-4xl mx-auto flex items-center gap-3">
-            <button
-              onClick={() => navigate(homePath)}
-              className="p-1.5 bg-accent/10 rounded-lg border border-accent/20 flex-shrink-0"
-              aria-label={t('detect.nav.home')}
-            >
-              <Activity className="w-5 h-5 text-accent" />
-            </button>
-            <span className="text-lg font-bold text-gradient-hero">RelayPulse</span>
-          </div>
-        </header>
+        <div className="max-w-7xl mx-auto w-full px-4 pt-4 sm:px-6 lg:px-8">
+          <Header stats={headerStats} />
+        </div>
 
         <main className="flex-1 max-w-4xl mx-auto w-full px-4 py-12 sm:py-16">
           {/* Hero */}

@@ -16,9 +16,12 @@ import { useSeoMeta } from './hooks/useSeoMeta';
 import { useUrlState } from './hooks/useUrlState';
 import { useFavorites } from './hooks/useFavorites';
 import { useAnnouncements } from './hooks/useAnnouncements';
-import { useRpdiagScores } from './hooks/useRpdiagScores';
+import { useRpdiagScores, lookupRpdiagScore } from './hooks/useRpdiagScores';
+import { useAuditChannels } from './hooks/useAuditChannels';
 import { createMediaQueryEffect } from './utils/mediaQuery';
 import { trackPeriodChange, trackServiceFilter, trackEvent } from './utils/analytics';
+import { adaptAuditChannelsToMonitorData, buildAuditStatusIndex } from './utils/auditChannelAdapter';
+import { sortMonitorsWithPinning } from './utils/sortMonitors';
 import type { TooltipState, ProcessedMonitorData, ChannelOption } from './types';
 
 // localStorage key for time align preference
@@ -180,8 +183,9 @@ function App() {
   };
 
   const { scores: rpdiagScores, loaded: rpdiagScoresLoaded } = useRpdiagScores();
+  const { channels: auditChannels, loading: auditChannelsLoading } = useAuditChannels();
 
-  const { loading, error, data, rawData, stats, providers, slowLatencyMs, enableAnnotations, boardsEnabled, boardsEnabledLoaded, boardCounts, allMonitorIds, allMonitorIdsSupported, hidePriceColumn, rpdiagEnabled, refetch } = useMonitorData({
+  const { loading, error, rawData, slowLatencyMs, enableAnnotations, boardsEnabled, boardsEnabledLoaded, boardCounts, sponsorPinConfig, allMonitorIds, allMonitorIdsSupported, hidePriceColumn, rpdiagEnabled, refetch } = useMonitorData({
     timeRange,
     timeAlign,
     timeFilter,
@@ -197,6 +201,13 @@ function App() {
     rpdiagScores,
     rpdiagScoresLoaded,
   });
+
+  const hasAuditChannelSource = auditChannels.length > 0;
+  const monitorStatusIndex = useMemo(() => buildAuditStatusIndex(rawData), [rawData]);
+  const displayRawData = useMemo<ProcessedMonitorData[]>(() => {
+    if (!hasAuditChannelSource) return rawData;
+    return adaptAuditChannelsToMonitorData(auditChannels, monitorStatusIndex);
+  }, [hasAuditChannelSource, rawData, auditChannels, monitorStatusIndex]);
 
   // 运行时 hide_price_column 切到 true 后，主动抹掉旧的 priceRatio_* URL 排序，
   // 避免点 hide 后用户带着隐藏列的"按价格排序"链接刷新仍触发该排序。
@@ -254,24 +265,24 @@ function App() {
   // 统计激活的筛选器数量（用于移动端 Header 显示）
   const activeFiltersCount = [
     showFavoritesOnly,
-    filterCategory.length > 0,
-    providers.length > 0 && filterProvider.length > 0,
+    !hasAuditChannelSource && filterCategory.length > 0,
+    filterProvider.length > 0,
     filterService.length > 0,
     filterChannel.length > 0,
   ].filter(Boolean).length;
 
   // 基础数据：应用收藏筛选后的数据（如适用）
   const baseData = useMemo(() => {
-    if (!showFavoritesOnly) return data;
-    return data.filter(item => favorites.has(item.id));
-  }, [data, showFavoritesOnly, favorites]);
+    if (!showFavoritesOnly) return displayRawData;
+    return displayRawData.filter(item => favorites.has(item.id));
+  }, [displayRawData, showFavoritesOnly, favorites]);
 
   // 选项基础数据：基于 rawData（未被筛选器过滤），用于计算 effectiveXxx
   // 这避免了循环依赖：选择一个 provider 后，其他 provider 仍然可见
   const optionsBaseData = useMemo(() => {
-    if (!showFavoritesOnly) return rawData;
-    return rawData.filter(item => favorites.has(item.id));
-  }, [rawData, showFavoritesOnly, favorites]);
+    if (!showFavoritesOnly) return displayRawData;
+    return displayRawData.filter(item => favorites.has(item.id));
+  }, [displayRawData, showFavoritesOnly, favorites]);
 
   // 最终过滤后的数据（应用所有筛选器）
   const filteredData = useMemo(() => {
@@ -279,7 +290,7 @@ function App() {
     const providerSet = filterProvider.length > 0 ? new Set(filterProvider) : null;
     const serviceSet = filterService.length > 0 ? new Set(filterService) : null;
     const channelSet = filterChannel.length > 0 ? new Set(filterChannel) : null;
-    const categorySet = filterCategory.length > 0 ? new Set(filterCategory) : null;
+    const categorySet = !hasAuditChannelSource && filterCategory.length > 0 ? new Set(filterCategory) : null;
 
     return baseData.filter(item => {
       if (providerSet && !providerSet.has(item.providerId)) return false;
@@ -288,22 +299,32 @@ function App() {
       if (categorySet && !categorySet.has(item.category)) return false;
       return true;
     });
-  }, [baseData, filterProvider, filterService, filterChannel, filterCategory]);
+  }, [baseData, filterProvider, filterService, filterChannel, filterCategory, hasAuditChannelSource]);
 
-  // 收藏模式下重新计算状态统计（基于 filteredData 而非全板块数据）
+  const sortedFilteredData = useMemo(() => {
+    const enriched = rpdiagEnabled && rpdiagScoresLoaded
+      ? filteredData.map((item) => ({
+          ...item,
+          qualityScore:
+            lookupRpdiagScore(rpdiagScores, item.providerId, item.serviceType, item.channelName || item.channel)
+              ?.max_score ?? item.qualityScore ?? null,
+        }))
+      : filteredData;
+    return sortMonitorsWithPinning(enriched, sortConfig, sponsorPinConfig, isInitialSort);
+  }, [filteredData, rpdiagEnabled, rpdiagScoresLoaded, rpdiagScores, sortConfig, sponsorPinConfig, isInitialSort]);
+
   const effectiveStats = useMemo(() => {
-    if (!showFavoritesOnly) return stats;
-    const total = filteredData.length;
-    const healthy = filteredData.filter(i => i.currentStatus === 'AVAILABLE').length;
+    const total = sortedFilteredData.length;
+    const healthy = sortedFilteredData.filter((i) => i.currentStatus === 'AVAILABLE').length;
     return { total, healthy, issues: total - healthy };
-  }, [showFavoritesOnly, stats, filteredData]);
+  }, [sortedFilteredData]);
 
   // 动态 Provider 选项：联动筛选 + 保留已选项
   const effectiveProviders = useMemo(() => {
     // 预构建 Set 优化查询性能
     const serviceSet = filterService.length > 0 ? new Set(filterService) : null;
     const channelSet = filterChannel.length > 0 ? new Set(filterChannel) : null;
-    const categorySet = filterCategory.length > 0 ? new Set(filterCategory) : null;
+    const categorySet = !hasAuditChannelSource && filterCategory.length > 0 ? new Set(filterCategory) : null;
     const providerSet = new Set(filterProvider);
 
     // 1. 应用其他筛选条件（不包括 provider 自身）
@@ -341,14 +362,14 @@ function App() {
         value,
         label: count === 0 && providerSet.has(value) ? `${label} (0)` : label,
       }));
-  }, [optionsBaseData, filterService, filterChannel, filterCategory, filterProvider]);
+  }, [optionsBaseData, filterService, filterChannel, filterCategory, filterProvider, hasAuditChannelSource]);
 
   // 动态 Service 选项：联动筛选 + 保留已选项
   const effectiveServices = useMemo(() => {
     // 预构建 Set 优化查询性能
     const providerSet = filterProvider.length > 0 ? new Set(filterProvider) : null;
     const channelSet = filterChannel.length > 0 ? new Set(filterChannel) : null;
-    const categorySet = filterCategory.length > 0 ? new Set(filterCategory) : null;
+    const categorySet = !hasAuditChannelSource && filterCategory.length > 0 ? new Set(filterCategory) : null;
     const serviceSet = new Set(filterService);
 
     // 1. 应用其他筛选条件（不包括 service 自身）
@@ -379,14 +400,14 @@ function App() {
       .map(([value, count]) =>
         count === 0 && serviceSet.has(value) ? `${value} (0)` : value
       );
-  }, [optionsBaseData, filterProvider, filterChannel, filterCategory, filterService]);
+  }, [optionsBaseData, filterProvider, filterChannel, filterCategory, filterService, hasAuditChannelSource]);
 
   // 动态 Channel 选项：联动筛选 + 保留已选项
   const effectiveChannels = useMemo<ChannelOption[]>(() => {
     // 预构建 Set 优化查询性能
     const providerSet = filterProvider.length > 0 ? new Set(filterProvider) : null;
     const serviceSet = filterService.length > 0 ? new Set(filterService) : null;
-    const categorySet = filterCategory.length > 0 ? new Set(filterCategory) : null;
+    const categorySet = !hasAuditChannelSource && filterCategory.length > 0 ? new Set(filterCategory) : null;
     const channelSet = new Set(filterChannel);
 
     // 1. 应用其他筛选条件（不包括 channel 自身）
@@ -432,7 +453,7 @@ function App() {
         value,
         label: count === 0 && channelSet.has(value) ? `${label} (0)` : label,
       }));
-  }, [optionsBaseData, filterProvider, filterService, filterCategory, filterChannel]);
+  }, [optionsBaseData, filterProvider, filterService, filterCategory, filterChannel, hasAuditChannelSource]);
 
   // 动态 Category 选项：联动筛选 + 保留已选项
   const effectiveCategories = useMemo(() => {
@@ -645,7 +666,8 @@ function App() {
               channels={effectiveChannels}
               providers={effectiveProviders}
               effectiveServices={effectiveServices}
-              effectiveCategories={effectiveCategories}
+              effectiveCategories={hasAuditChannelSource ? [] : effectiveCategories}
+              showCategoryFilter={!hasAuditChannelSource}
               isMobile={isMobile}
               showFilterDrawer={showFilterDrawer}
               onFilterDrawerClose={() => setShowFilterDrawer(false)}
@@ -679,7 +701,7 @@ function App() {
               <div className="flex items-center justify-between">
                 <span className="font-mono">{screenshotTimestamp}</span>
                 <span>
-                  {filteredData.length} 个服务 | {timeRange}
+                  {sortedFilteredData.length} 个服务 | {timeRange}
                 </span>
               </div>
             </div>
@@ -700,12 +722,12 @@ function App() {
               <Server size={64} className="mb-4 opacity-20" />
               <p className="text-lg">{t('common.error', { message: error })}</p>
             </div>
-          ) : loading && data.length === 0 ? (
+          ) : (loading || (hasAuditChannelSource && auditChannelsLoading)) && displayRawData.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-64 text-muted gap-4">
               <div className="w-12 h-12 border-4 border-accent/20 rounded-full animate-spin" style={{ borderTopColor: 'hsl(var(--accent))' }} />
               <p className="animate-pulse">{t('common.loading')}</p>
             </div>
-          ) : data.length === 0 ? (
+          ) : displayRawData.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-muted">
               <Server size={64} className="mb-4 opacity-20" />
               <p className="text-lg">{t('common.noData')}</p>
@@ -717,7 +739,7 @@ function App() {
             <>
               {effectiveViewMode === 'table' && (
                 <StatusTable
-                  data={filteredData}
+                  data={sortedFilteredData}
                   sortConfig={sortConfig}
                   isInitialSort={isInitialSort}
                   timeRange={timeRange}
@@ -725,6 +747,10 @@ function App() {
                   enableAnnotations={isScreenshotMode ? false : enableAnnotations}
                   showCategoryTag={!isScreenshotMode}
                   showSponsor={!isScreenshotMode}
+                  showModel={false}
+                  showListedDays={false}
+                  showLastCheck={false}
+                  showQuality={false}
                   isFavorite={isFavorite}
                   onToggleFavorite={toggleFavorite}
                   onSort={handleSort}
@@ -734,13 +760,13 @@ function App() {
                   rpdiagScores={rpdiagScores}
                   rpdiagScoresLoaded={rpdiagScoresLoaded}
                   rpdiagEnabled={rpdiagEnabled}
-                  hidePriceColumn={hidePriceColumn}
+                  hidePriceColumn={true}
                 />
               )}
 
               {effectiveViewMode === 'grid' && (
                 <div data-heatmap-container className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                  {filteredData.map((item) => (
+                  {sortedFilteredData.map((item) => (
                     <StatusCard
                       key={item.id}
                       item={item}
@@ -760,7 +786,7 @@ function App() {
           )}
 
           {/* 免责声明 - 截图模式下隐藏 */}
-          {!isScreenshotMode && <Footer rpdiagEnabled={rpdiagEnabled} />}
+          {!isScreenshotMode && <Footer />}
         </div>
       </div>
     </>

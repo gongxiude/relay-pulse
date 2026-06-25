@@ -28,6 +28,39 @@ docker compose up -d
 - Web 界面：http://localhost:8080
 - API：http://localhost:8080/api/status
 - 健康检查：http://localhost:8080/health
+- 审计工作台：http://localhost:8080/audit
+
+## 启用 new-api 只读审计
+
+如果你要把 RelayPulse 当成 `new-api` 的只读审计系统，启动前额外配置 3 个环境变量：
+
+```bash
+export NEWAPI_BASE_URL=https://new-api.example.com
+export NEWAPI_ACCESS_TOKEN=your-token
+export NEWAPI_USER_ID=1
+```
+
+审计链路说明：
+
+- 只通过 `new-api` HTTP API 读取渠道和日志
+- 不连接 `new-api` 数据库
+- 不写回 `new-api`
+
+启动后可直接验证：
+
+```bash
+curl http://localhost:8080/api/audit/newapi/sync/status
+curl http://localhost:8080/api/audit/targets
+curl "http://localhost:8080/api/audit/ranking?window=24h"
+```
+
+页面入口：
+
+- `/audit`：同步状态与入口
+- `/audit/ranking`：生产稳定性排名
+- `/audit/targets`：自动生成的审计目标
+- `/audit/submit`：提交 quick-probe 诊断
+- `/audit/compare/:runId`：查看 compare 证据
 
 ## 常用命令
 

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Activity, CheckCircle, AlertTriangle, Sparkles, Share2, Filter } from 'lucide-react';
+import { Activity, CheckCircle, AlertTriangle, Share2, Filter } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation } from 'react-router-dom';
 
@@ -38,6 +38,11 @@ export function Header({ stats, onFilterClick, onRefresh, loading, refreshCooldo
 
   // 获取当前语言，使用类型守卫确保类型安全
   const currentLang: SupportedLanguage = isSupportedLanguage(i18n.language) ? i18n.language : 'zh-CN';
+  const langPath = LANGUAGE_PATH_MAP[currentLang];
+  const homePath = langPath ? `/${langPath}` : '/';
+  const methodPath = langPath ? `/${langPath}/detect` : '/detect';
+  const isHomeActive = location.pathname === homePath || location.pathname === `${homePath}/`;
+  const isMethodActive = location.pathname === methodPath;
 
   // 处理分享按钮点击
   const handleShare = async () => {
@@ -190,6 +195,25 @@ export function Header({ stats, onFilterClick, onRefresh, loading, refreshCooldo
 
         {/* 桌面端：右侧完整操作区（语言 + 主题 + 分享 + 推荐 + 统计卡片） */}
         <div className="hidden lg:flex items-center gap-2 flex-shrink-0">
+          <nav className="flex items-center gap-1 rounded-xl border border-default/60 bg-surface/50 px-1 py-1">
+            <button
+              onClick={() => navigate(homePath)}
+              className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none ${
+                isHomeActive ? 'text-primary bg-elevated/80' : 'text-secondary hover:text-primary hover:bg-elevated/60'
+              }`}
+            >
+              首页
+            </button>
+            <button
+              onClick={() => navigate(methodPath)}
+              className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none ${
+                isMethodActive ? 'text-primary bg-elevated/80' : 'text-secondary hover:text-primary hover:bg-elevated/60'
+              }`}
+            >
+              检测方法
+            </button>
+          </nav>
+
           {/* 语言切换器 - 点击/键盘展开 */}
           <div className="relative inline-block">
             <button
@@ -251,18 +275,6 @@ export function Header({ stats, onFilterClick, onRefresh, loading, refreshCooldo
             <Share2 size={16} />
           </button>
 
-          {/* 联系我们按钮 → 联系页面 */}
-          <button
-            onClick={() => {
-              const langPath = LANGUAGE_PATH_MAP[currentLang];
-              navigate(langPath ? `/${langPath}/contact` : '/contact');
-            }}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-accent/40 bg-accent/10 text-accent font-semibold tracking-wide shadow-accent hover:bg-accent/20 transition focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none"
-          >
-            <Sparkles size={14} />
-            {t('header.contactBtn')}
-          </button>
-
           {/* 统计卡片 - 紧凑单行 */}
           <div className="flex gap-2">
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface/50 border border-default"
@@ -311,6 +323,25 @@ export function Header({ stats, onFilterClick, onRefresh, loading, refreshCooldo
           />
         )}
 
+        <div className="flex items-center gap-1 rounded-lg border border-default/60 bg-surface/50 px-1 py-1">
+          <button
+            onClick={() => navigate(homePath)}
+            className={`px-2 py-1 rounded text-xs transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none ${
+              isHomeActive ? 'text-primary bg-elevated/80' : 'text-secondary hover:text-primary'
+            }`}
+          >
+            首页
+          </button>
+          <button
+            onClick={() => navigate(methodPath)}
+            className={`px-2 py-1 rounded text-xs transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none ${
+              isMethodActive ? 'text-primary bg-elevated/80' : 'text-secondary hover:text-primary'
+            }`}
+          >
+            检测方法
+          </button>
+        </div>
+
         {/* 分享按钮 - 移动端 */}
         <button
           onClick={handleShare}
@@ -319,18 +350,6 @@ export function Header({ stats, onFilterClick, onRefresh, loading, refreshCooldo
         >
           <Share2 size={12} />
           {t('share.shareShort')}
-        </button>
-
-        {/* 联系我们按钮 - 移动端紧凑版 */}
-        <button
-          onClick={() => {
-            const langPath = LANGUAGE_PATH_MAP[currentLang];
-            navigate(langPath ? `/${langPath}/contact` : '/contact');
-          }}
-          className="flex items-center gap-1 px-2 py-1 rounded-lg border border-accent/40 bg-accent/10 text-accent text-xs font-medium shadow-accent hover:bg-accent/20 transition whitespace-nowrap focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-none"
-        >
-          <Sparkles size={12} />
-          {t('header.contactBtnShort')}
         </button>
       </div>
     </header>

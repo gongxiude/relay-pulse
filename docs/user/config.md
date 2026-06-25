@@ -2114,6 +2114,23 @@ MONITOR_POSTGRES_SSLMODE=require
 MONITOR_CORS_ORIGINS=http://localhost:5173,http://localhost:3000
 ```
 
+### new-api 只读审计接入
+
+RelayPulse 的 new-api 审计链路只从环境变量读取凭据，不把凭据写进 YAML 配置。
+
+```bash
+NEWAPI_BASE_URL=https://new-api.example.com
+NEWAPI_ACCESS_TOKEN=your-newapi-access-token
+NEWAPI_USER_ID=your-newapi-user-id
+```
+
+**说明**：
+- `NEWAPI_BASE_URL`：new-api HTTP API 基地址
+- `NEWAPI_ACCESS_TOKEN`：只读访问令牌
+- `NEWAPI_USER_ID`：当前审计身份标识
+- 这些变量在启动期读取，缺失会阻止服务启动
+- `.env` 文件可用于本地开发和 Docker 启动，但不参与运行时热更新
+
 ### rpdiag 质量列集成（可选，默认关闭）
 
 首页状态表的「质量」列与 `/detect`（中转站检测）专题页消费的是 **rpdiag** 导出的排名数据。rpdiag 是一套**独立的、未开源的**质量盲评平台，仅 relaypulse.top 官方部署接入。对于私有化 / 自部署，本功能**默认关闭**——不配置即可，监测主功能完全不受影响。

@@ -160,7 +160,7 @@ func pgCount(t *testing.T, store *PostgresStorage, query string, args ...any) in
 func TestPG_Init_TablesAndIndexes(t *testing.T) {
 	store := newTestPGStore(t)
 
-	for _, tbl := range []string{"probe_history", "service_states", "status_events", "channel_states"} {
+	for _, tbl := range []string{"probe_history", "service_states", "status_events", "channel_states", "newapi_channel_snapshots", "newapi_log_sync_cursors", "newapi_logs", "audit_targets", "diagnostic_runs", "diagnostic_steps", "diagnostic_scores"} {
 		if !pgTableExists(t, store, tbl) {
 			t.Errorf("expected table %q", tbl)
 		}

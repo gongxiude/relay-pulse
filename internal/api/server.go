@@ -164,6 +164,17 @@ func NewServer(store storage.Storage, cfg *config.AppConfig, port string, autoMo
 	router.GET("/api/events", handler.GetEvents)
 	router.GET("/api/events/latest", handler.GetLatestEventID)
 
+	// 审计 API 路由
+	router.GET("/api/audit/newapi/sync/status", handler.GetAuditSyncStatus)
+	router.POST("/api/audit/newapi/sync/channels", handler.PostAuditSyncChannels)
+	router.POST("/api/audit/newapi/sync/logs", handler.PostAuditSyncLogs)
+	router.GET("/api/audit/channels", handler.GetAuditChannels)
+	router.GET("/api/audit/targets", handler.GetAuditTargets)
+	router.GET("/api/audit/ranking", handler.GetAuditRanking)
+	router.POST("/api/audit/diagnostics", handler.PostAuditDiagnosticSubmit)
+	router.GET("/api/audit/diagnostics/:run_id", handler.GetAuditDiagnostic)
+	router.GET("/api/audit/compare/:run_id", handler.GetAuditCompare)
+
 	// 自助收录 API 路由
 	router.GET("/api/onboarding/meta", handler.GetOnboardingMeta)
 	router.POST("/api/onboarding/test", handler.OnboardingTest)

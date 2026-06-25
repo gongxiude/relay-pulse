@@ -4,7 +4,6 @@ import { useTranslation } from 'react-i18next';
 import { StatusDot } from './StatusDot';
 import { HeatmapBlock } from './HeatmapBlock';
 import { LayeredHeatmapBlock } from './LayeredHeatmapBlock';
-import { ExternalLink } from './ExternalLink';
 import { FavoriteButton } from './FavoriteButton';
 import { getTimeRanges } from '../constants';
 import { availabilityToColor, latencyToColor, sponsorLevelToCardBorderColor, sponsorLevelToPinnedBgClass } from '../utils/color';
@@ -13,6 +12,9 @@ import { aggregateHeatmap } from '../utils/heatmapAggregator';
 import { getServiceIconComponent } from './ServiceIcon';
 import { AnnotationCell } from './annotations';
 import { hasAnyAnnotation } from '../utils/annotationUtils';
+import { Link } from 'react-router-dom';
+import { LANGUAGE_PATH_MAP, type SupportedLanguage } from '../i18n';
+import { buildProviderDetailHref } from '../utils/auditChannelAdapter';
 import type { ProcessedMonitorData } from '../types';
 
 type HistoryPoint = ProcessedMonitorData['history'][number];
@@ -64,6 +66,7 @@ function StatusCardComponent({
   const currentTimeRange = getTimeRanges(t).find((r) => r.id === timeRange);
   const useLatencyGradient = timeRange === '90m';
   const ServiceIcon = getCachedServiceIcon(item.serviceType);
+  const detailHref = buildProviderDetailHref(item, LANGUAGE_PATH_MAP[i18n.language as SupportedLanguage]);
 
   // 检查是否有注解需要显示
   const hasAnnotations = hasAnyAnnotation(item, { enableAnnotations });
@@ -107,7 +110,13 @@ function StatusCardComponent({
             <div className="flex items-center gap-2 flex-wrap">
               {showProvider && (
                 <h3 className="text-base sm:text-lg font-bold text-primary">
-                  <ExternalLink href={item.providerUrl} requireConfirm>{item.providerName}</ExternalLink>
+                  {detailHref ? (
+                    <Link to={detailHref} className="hover:text-accent transition-colors">
+                      {item.providerName}
+                    </Link>
+                  ) : (
+                    item.providerName
+                  )}
                 </h3>
               )}
               {/* 收藏按钮 */}

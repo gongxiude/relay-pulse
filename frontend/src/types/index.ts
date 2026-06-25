@@ -176,6 +176,10 @@ export interface ProcessedMonitorData {
   listedDays?: number | null;          // 收录天数
   channel?: string;                    // 业务通道标识
   channelName?: string;                // Channel 显示名称
+  auditChannelType?: 'recommended' | 'official' | 'reverse' | 'mixed' | 'unknown' | 'user';
+  auditChannelTypeLabel?: string | null;
+  newApiStatusCode?: number | null;    // new-api 同步的原始状态码
+  newApiStatusLabel?: string | null;   // new-api 状态展示文案
   board: BoardValue;                   // 板块：hot/secondary/cold
   coldReason?: string;                 // 冷板原因（仅 cold 有值）
   probeUrl?: string;                   // 探测端点 URL（脱敏后）

@@ -186,6 +186,11 @@ func (s *PostgresStorage) Init() error {
 		return err
 	}
 
+	// 审计表
+	if err := s.initAuditTables(ctx); err != nil {
+		return err
+	}
+
 	return nil
 }
 

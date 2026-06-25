@@ -31,6 +31,11 @@ func (c *AppConfig) normalize() error {
 		return err
 	}
 
+	// 4.5 new-api 只读接入配置
+	if err := c.NewAPI.normalize(); err != nil {
+		return err
+	}
+
 	// 5. 构建 Provider 映射索引
 	ctx := newNormalizeContext()
 	if err := c.buildNormalizeIndexes(ctx); err != nil {
