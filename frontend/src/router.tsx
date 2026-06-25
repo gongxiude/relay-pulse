@@ -81,6 +81,7 @@ function renderChildRoutes() {
     <>
       <Route index element={<App />} />
       <Route path="status" element={<App />} />
+      <Route path="p/claudecn-gpt" element={<DetectPage />} />
       <Route path="p/:provider" element={<ProviderPage />} />
       <Route path="detect" element={<DetectPage />} />
       <Route path="detect/compare/:runId" element={<DetectComparePage />} />

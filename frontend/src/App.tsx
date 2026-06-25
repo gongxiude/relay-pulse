@@ -164,13 +164,11 @@ function App() {
           <section className="mb-5 rounded-2xl border border-default/70 bg-surface/55 px-5 py-5">
             <h1 className="text-3xl font-bold tracking-tight text-primary">服务商列表</h1>
             <p className="mt-3 text-secondary text-base leading-relaxed">
-              当前首页只展示从 `new-api` 同步过来的真实服务商、服务、渠道状态和可用率趋势。点击服务商后进入详情页，查看该渠道下每个模型的状态。
+              首页只保留服务商入口。数据全部来自 `new-api` 同步快照，表格只展示当前状态、可用率和可用率趋势。点击服务商后进入详情页，查看该通道下每个模型的状态。
             </p>
             <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-secondary">
-              <span>当前服务商行 {providerRows.length}</span>
-              <span>同步渠道快照 {rows.length}</span>
-              <span>已启用 {headerStats.healthy}</span>
-              <span>未启用 {headerStats.issues}</span>
+              <span>服务商 {providerRows.length}</span>
+              <span>同步通道 {rows.length}</span>
             </div>
           </section>
 

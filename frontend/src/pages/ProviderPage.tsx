@@ -1,7 +1,6 @@
 import { useEffect, useMemo } from 'react';
 import { useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
-import { CircleHelp, Sparkles } from 'lucide-react';
 
 import { Header } from '../components/Header';
 import { ChannelTypeIcon, parseChannelType } from '../components/ChannelTypeIcon';
@@ -23,7 +22,7 @@ import {
 import { canonicalize } from '../utils/monitorDataProcessor';
 
 type ServiceTab = 'cc' | 'cx';
-type SourceKey = 'all' | 'recommended' | 'official' | 'reverse' | 'mixed' | 'unknown' | 'user';
+type SourceKey = 'all' | 'official' | 'reverse' | 'mixed' | 'unknown';
 
 interface ModelDetailRow {
   id: string;
@@ -51,12 +50,10 @@ const SERVICE_TAB_LABELS: Record<ServiceTab, string> = {
 };
 
 const SOURCE_META: Record<Exclude<SourceKey, 'all'>, { label: string; icon: React.ReactNode }> = {
-  recommended: { label: '董推', icon: <Sparkles size={14} className="text-cyan-300" /> },
-  official: { label: '服务商自报官方通道 (O-)', icon: <ChannelTypeIcon channel="O-demo" /> },
+  official: { label: '官方直连', icon: <ChannelTypeIcon channel="O-demo" /> },
   reverse: { label: '逆向 (R-)', icon: <ChannelTypeIcon channel="R-demo" /> },
-  mixed: { label: '混合 (M-)', icon: <ChannelTypeIcon channel="M-demo" /> },
+  mixed: { label: '混合', icon: <ChannelTypeIcon channel="M-demo" /> },
   unknown: { label: '未知', icon: <ChannelTypeIcon channel="X-demo" /> },
-  user: { label: '用户提交 (U-)', icon: <CircleHelp size={14} className="text-slate-300" /> },
 };
 
 export default function ProviderPage() {
@@ -408,7 +405,7 @@ export default function ProviderPage() {
         <title>{pageTitle}</title>
         <meta
           name="description"
-          content={`${providerDisplayName} 的模型级质量与可用率详情页，按模型展示最终质量分、机器指纹分、趋势与监控补充指标。`}
+          content={`${providerDisplayName} 的模型级详情页。当前页按真实同步通道展开，并展示每个模型的状态、最近检测状态和可用率趋势。`}
         />
       </Helmet>
 
@@ -470,7 +467,7 @@ export default function ProviderPage() {
               <div>
                 <h2 className="text-lg font-semibold text-primary">同步通道</h2>
                 <p className="mt-1 text-sm text-secondary">
-                  下列通道全部来自 `new-api` 同步快照。点击后切换当前详情页的通道视图。
+                  下列通道全部来自 `new-api` 同步快照。先选定当前通道，再查看该通道下每个模型的状态。
                 </p>
               </div>
               <div className="text-xs text-muted">
@@ -986,10 +983,6 @@ function inferSourceKey(snapshot: AuditChannelSnapshot): SourceKey {
   if (type === 'official') return 'official';
   if (type === 'reverse') return 'reverse';
   if (type === 'mixed') return 'mixed';
-
-  const rawText = JSON.stringify(snapshot.raw || {}).toLowerCase();
-  if (rawText.includes('recommend') || rawText.includes('董推')) return 'recommended';
-  if (rawText.includes('user') || rawText.includes('submit')) return 'user';
   return 'unknown';
 }
 

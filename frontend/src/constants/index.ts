@@ -74,11 +74,11 @@ export const HIDE_PRICE_COLUMN =
 // 向后兼容：优先使用新的环境变量，回退到旧的 VITE_FEEDBACK_URL
 const legacyFeedbackUrl = import.meta.env.VITE_FEEDBACK_URL;
 export const FEEDBACK_URLS = {
-  // 申请收录（指向站内自助收录页）
+  // 申请收录公开页已下线；未显式配置时回退到问题反馈入口
   PROVIDER_SUGGESTION:
     import.meta.env.VITE_FEEDBACK_PROVIDER_URL ||
     legacyFeedbackUrl ||
-    '/contact/apply',
+    'https://github.com/prehisle/relay-pulse/issues/new?template=2-bug-report.yml',
   // 问题反馈
   BUG_REPORT:
     import.meta.env.VITE_FEEDBACK_BUG_URL ||

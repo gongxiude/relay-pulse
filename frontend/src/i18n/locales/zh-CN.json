@@ -43,8 +43,8 @@
   },
   "header": {
     "tagline": "实时监测API中转服务可用性矩阵",
-    "contactBtn": "联系我们",
-    "contactBtnShort": "联系",
+    "contactBtn": "首页",
+    "contactBtnShort": "首页",
     "stats": {
       "healthy": "正常运行",
       "issues": "异常告警"
@@ -245,7 +245,7 @@
   "footer": {
     "detectLink": "中转站检测",
     "disclaimer": {
-      "title": "平台声明",
+      "title": "检测说明",
       "dataReference": {
         "title": "真实消耗探测",
         "text": "基于真实 Token 消耗发起探测，数据受当时网络环境及服务商负载影响，真实还原 API 响应质量"
@@ -585,34 +585,6 @@
           "a": "RelayPulse 靠服务商赞助运营，但赞助不影响检测结果与质量排序；探测方法和数据公开、可复现。我们是中立的质量与可用性仪表，不是返佣导航。"
         }
       ]
-    }
-  },
-  "contact": {
-    "meta": {
-      "title": "联系我们 | RelayPulse",
-      "description": "申请收录、变更通道配置或提交反馈"
-    },
-    "title": "联系我们",
-    "description": "选择您需要的服务，我们将为您提供帮助",
-    "apply": {
-      "title": "申请收录",
-      "description": "提交新的 API 服务到 RelayPulse 监测平台"
-    },
-    "change": {
-      "title": "申请变更",
-      "description": "修改已收录通道的配置信息（如地址、密钥等）"
-    },
-    "feedback": {
-      "title": "提交反馈",
-      "description": "建议、问题反馈或其他事务"
-    },
-    "community": {
-      "title": "加入社群",
-      "description": "加入 QQ 群，与其他用户交流"
-    },
-    "discussions": {
-      "title": "参与讨论",
-      "description": "在 GitHub Discussions 提问、分享和交流"
     }
   },
   "changeRequest": {

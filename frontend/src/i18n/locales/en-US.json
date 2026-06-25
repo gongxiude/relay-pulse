@@ -43,8 +43,8 @@
   },
   "header": {
     "tagline": "Real-time availability matrix for API relay services",
-    "contactBtn": "Contact Us",
-    "contactBtnShort": "Contact",
+    "contactBtn": "Home",
+    "contactBtnShort": "Home",
     "stats": {
       "healthy": "Operational",
       "issues": "Issues detected"
@@ -245,7 +245,7 @@
   "footer": {
     "detectLink": "Relay detection",
     "disclaimer": {
-      "title": "Platform Statement",
+      "title": "Audit Notes",
       "dataReference": {
         "title": "Real Consumption Probing",
         "text": "Probes are initiated based on actual token usage; results vary with network conditions and provider load, faithfully reflecting API response quality"
@@ -582,34 +582,6 @@
           "a": "RelayPulse runs on provider sponsorship, but sponsorship does not affect detection results or quality ranking; our probing method and data are public and reproducible. We are a neutral quality-and-availability dashboard, not a referral directory."
         }
       ]
-    }
-  },
-  "contact": {
-    "meta": {
-      "title": "Contact Us | RelayPulse",
-      "description": "Apply for listing, request changes, or submit feedback"
-    },
-    "title": "Contact Us",
-    "description": "Choose the service you need, and we'll help you",
-    "apply": {
-      "title": "Apply for Listing",
-      "description": "Submit a new API service to the RelayPulse monitoring platform"
-    },
-    "change": {
-      "title": "Request Changes",
-      "description": "Modify the configuration of an already-listed channel (e.g. URL, API key)"
-    },
-    "feedback": {
-      "title": "Submit Feedback",
-      "description": "Suggestions, bug reports, or other inquiries"
-    },
-    "community": {
-      "title": "Join Community",
-      "description": "Join our QQ group to chat with other users"
-    },
-    "discussions": {
-      "title": "Discussions",
-      "description": "Ask questions, share ideas, and discuss on GitHub Discussions"
     }
   },
   "changeRequest": {

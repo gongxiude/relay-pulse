@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Activity, CheckCircle, AlertTriangle } from 'lucide-react';
+import { Activity } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation } from 'react-router-dom';
 
@@ -16,6 +16,7 @@ interface HeaderProps {
 }
 
 export function Header({ stats }: HeaderProps) {
+  void stats;
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
@@ -104,7 +105,7 @@ export function Header({ stats }: HeaderProps) {
           </p>
         </div>
 
-        {/* 移动端：右上角操作区（语言 + 主题 + 统计卡片） */}
+        {/* 移动端：右上角操作区（语言 + 主题） */}
         <div className="flex items-center gap-1 lg:hidden flex-shrink-0">
           {/* 语言切换器 - 点击展开 */}
           <div className="relative">
@@ -153,23 +154,9 @@ export function Header({ stats }: HeaderProps) {
 
           {/* 主题切换器 */}
           <ThemeSwitcher />
-
-          {/* 统计卡片 - 极简模式（最右侧） */}
-          <div className="flex gap-0.5 ml-0.5 flex-shrink-0">
-            <div className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-surface/50 border border-default"
-                 title={t('header.stats.healthy')}>
-              <CheckCircle size={10} className="text-success" />
-              <span className="font-mono font-bold text-success text-[10px]">{stats.healthy}</span>
-            </div>
-            <div className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-surface/50 border border-default"
-                 title={t('header.stats.issues')}>
-              <AlertTriangle size={10} className="text-danger" />
-              <span className="font-mono font-bold text-danger text-[10px]">{stats.issues}</span>
-            </div>
-          </div>
         </div>
 
-        {/* 桌面端：右侧完整操作区（语言 + 主题 + 分享 + 推荐 + 统计卡片） */}
+        {/* 桌面端：右侧完整操作区（首页 / 检测方法 + 语言 + 主题） */}
         <div className="hidden lg:flex items-center gap-2 flex-shrink-0">
           <nav className="flex items-center gap-1 rounded-xl border border-default/60 bg-surface/50 px-1 py-1">
             <button
@@ -240,20 +227,6 @@ export function Header({ stats }: HeaderProps) {
 
           {/* 主题切换器 */}
           <ThemeSwitcher />
-
-          {/* 统计卡片 - 紧凑单行 */}
-          <div className="flex gap-2">
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface/50 border border-default"
-                 title={t('header.stats.healthy')}>
-              <CheckCircle size={14} className="text-success" />
-              <span className="font-mono font-bold text-success text-lg">{stats.healthy}</span>
-            </div>
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface/50 border border-default"
-                 title={t('header.stats.issues')}>
-              <AlertTriangle size={14} className="text-danger" />
-              <span className="font-mono font-bold text-danger text-lg">{stats.issues}</span>
-            </div>
-          </div>
         </div>
       </div>
 

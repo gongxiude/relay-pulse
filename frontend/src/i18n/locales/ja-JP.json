@@ -43,8 +43,8 @@
   },
   "header": {
     "tagline": "API中継サービスの可用性マトリクスをリアルタイム監視",
-    "contactBtn": "お問い合わせ",
-    "contactBtnShort": "問合せ",
+    "contactBtn": "ホーム",
+    "contactBtnShort": "ホーム",
     "stats": {
       "healthy": "正常稼働",
       "issues": "異常アラート"
@@ -245,7 +245,7 @@
   "footer": {
     "detectLink": "中継検出",
     "disclaimer": {
-      "title": "プラットフォーム声明",
+      "title": "検査メモ",
       "dataReference": {
         "title": "実消費ベースのプローブ",
         "text": "実際のトークン消費に基づき計測を実行。結果は当時のネットワーク状況とプロバイダー負荷に左右され、API応答品質を忠実に反映します"
@@ -549,34 +549,6 @@
           "a": "RelayPulse はプロバイダのスポンサーで運営していますが、スポンサーは検出結果や品質順位に影響しません。プローブ手法とデータは公開かつ再現可能です。私たちは中立の品質・可用性ダッシュボードであり、紹介料ディレクトリではありません。"
         }
       ]
-    }
-  },
-  "contact": {
-    "meta": {
-      "title": "お問い合わせ | RelayPulse",
-      "description": "掲載申請、変更リクエスト、フィードバックの送信"
-    },
-    "title": "お問い合わせ",
-    "description": "必要なサービスを選択してください",
-    "apply": {
-      "title": "掲載申請",
-      "description": "新しいAPIサービスをRelayPulse監視プラットフォームに追加"
-    },
-    "change": {
-      "title": "変更リクエスト",
-      "description": "掲載済みチャネルの設定を変更（URL、APIキーなど）"
-    },
-    "feedback": {
-      "title": "フィードバック",
-      "description": "ご提案、バグ報告、その他のお問い合わせ"
-    },
-    "community": {
-      "title": "コミュニティ",
-      "description": "QQグループに参加して、他のユーザーと交流しましょう"
-    },
-    "discussions": {
-      "title": "ディスカッション",
-      "description": "GitHub Discussionsで質問・共有・議論"
     }
   },
   "changeRequest": {
