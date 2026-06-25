@@ -238,7 +238,7 @@ func TestAuditDiagnosticAndCompare(t *testing.T) {
 		CreatedAt: 1710000000,
 		UpdatedAt: 1710000001,
 		Input:     []byte(`{"group_id":"group-bad","request_model":"gpt-4o"}`),
-		Output:    []byte(`{"run_status":"failed_auth","tags":["request_error"]}`),
+		Output:    []byte(`{"tags":["request_error"]}`),
 	}); err != nil {
 		t.Fatalf("SaveDiagnosticRun bad: %v", err)
 	}
@@ -252,6 +252,19 @@ func TestAuditDiagnosticAndCompare(t *testing.T) {
 		CreatedAt:       1710000002,
 	}); err != nil {
 		t.Fatalf("SaveDiagnosticStep: %v", err)
+	}
+	if err := store.SaveDiagnosticStep(&storage.DiagnosticStep{
+		RunID:           "run-bad",
+		StepIndex:       1,
+		Prompt:          "ping",
+		ResolvedPrompt:  "ping",
+		ResponsePreview: "",
+		ResultSummary:   "same_session",
+		ErrorMessage:    "http 401",
+		ExecutionMeta:   []byte(`{"step_name":"ping","error":"http 401"}`),
+		CreatedAt:       1710000002,
+	}); err != nil {
+		t.Fatalf("SaveDiagnosticStep bad: %v", err)
 	}
 	if err := store.SaveDiagnosticScore(&storage.DiagnosticScore{
 		RunID:             run.RunID,
@@ -350,6 +363,26 @@ func TestAuditDiagnosticAndCompare(t *testing.T) {
 		t.Fatalf("unexpected compare summary/steps: %+v", compareResp.Data)
 	}
 
+	req = httptest.NewRequest(http.MethodGet, "/api/audit/diagnostics/run-bad", nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("diagnostics bad run unexpected: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var badDiagResp struct {
+		Success bool                    `json:"success"`
+		Data    auditDiagnosticResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &badDiagResp); err != nil {
+		t.Fatalf("unmarshal bad diagnostics response: %v", err)
+	}
+	if !badDiagResp.Success ||
+		badDiagResp.Data.Run.RunID != "run-bad" ||
+		badDiagResp.Data.Run.RunStatus != "failed_auth" ||
+		badDiagResp.Data.Run.RunStatusReason == "" {
+		t.Fatalf("unexpected bad diagnostics payload: %+v", badDiagResp)
+	}
+
 	req = httptest.NewRequest(http.MethodGet, "/api/audit/diagnostics/latest?provider=OpenAI&service=cc&channel=101:demo&model=gpt-4o", nil)
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -366,6 +399,38 @@ func TestAuditDiagnosticAndCompare(t *testing.T) {
 	if !latestResp.Success || len(latestResp.Data.Items) != 1 || latestResp.Data.Items[0].Run.RunID != "run-1" {
 		t.Fatalf("unexpected latest payload: %+v", latestResp)
 	}
+	if !latestResp.Data.Items[0].Usable || latestResp.Data.Items[0].FilterReason != "usable" {
+		t.Fatalf("unexpected latest usability payload: %+v", latestResp.Data.Items[0])
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/audit/diagnostics/latest?provider=OpenAI&service=cc&channel=101:demo&include_filtered=1&limit=5", nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("latest include_filtered unexpected: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var latestWithFilteredResp struct {
+		Success bool                          `json:"success"`
+		Data    auditDiagnosticLatestResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &latestWithFilteredResp); err != nil {
+		t.Fatalf("unmarshal latest include_filtered response: %v", err)
+	}
+	if !latestWithFilteredResp.Success || len(latestWithFilteredResp.Data.Items) != 2 {
+		t.Fatalf("unexpected latest include_filtered payload: %+v", latestWithFilteredResp)
+	}
+	if latestWithFilteredResp.Data.Items[0].Run.RunID != "run-bad" ||
+		latestWithFilteredResp.Data.Items[0].Usable ||
+		latestWithFilteredResp.Data.Items[0].FilterReason != "failed_auth" ||
+		latestWithFilteredResp.Data.Items[0].Run.RunStatus != "failed_auth" {
+		t.Fatalf("unexpected latest filtered first item: %+v", latestWithFilteredResp.Data.Items[0])
+	}
+	if latestWithFilteredResp.Data.Items[0].Run.RunStatusReason == "" {
+		t.Fatalf("expected latest filtered item to include run status reason: %+v", latestWithFilteredResp.Data.Items[0])
+	}
+	if latestWithFilteredResp.Data.Items[1].Run.RunID != "run-1" || !latestWithFilteredResp.Data.Items[1].Usable {
+		t.Fatalf("unexpected latest filtered second item: %+v", latestWithFilteredResp.Data.Items[1])
+	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/audit/methodology", nil)
 	rec = httptest.NewRecorder()
@@ -373,8 +438,26 @@ func TestAuditDiagnosticAndCompare(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("methodology unexpected: code=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if !containsJSON(rec.Body.String(), `"done_runs":1`) || !containsJSON(rec.Body.String(), `"dimension_runs":1`) {
-		t.Fatalf("unexpected methodology payload: %s", rec.Body.String())
+	var methodologyResp struct {
+		Success bool                     `json:"success"`
+		Data    auditMethodologyResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &methodologyResp); err != nil {
+		t.Fatalf("unmarshal methodology response: %v", err)
+	}
+	if !methodologyResp.Success {
+		t.Fatalf("unexpected methodology success flag: %+v", methodologyResp)
+	}
+	if methodologyResp.Data.Coverage.DoneRuns != 2 ||
+		methodologyResp.Data.Coverage.DimensionRuns != 1 ||
+		methodologyResp.Data.Coverage.DimensionRowCount != 1 ||
+		methodologyResp.Data.Coverage.FailedAuthRuns != 1 ||
+		methodologyResp.Data.Coverage.FailedRequestRuns != 0 ||
+		methodologyResp.Data.Coverage.FilteredRuns != 1 {
+		t.Fatalf("unexpected methodology coverage: %+v", methodologyResp.Data.Coverage)
+	}
+	if methodologyResp.Data.Runtime.ProbeCredentialMode != "missing" || methodologyResp.Data.Runtime.ProbeReady {
+		t.Fatalf("unexpected methodology runtime: %+v", methodologyResp.Data.Runtime)
 	}
 }
 

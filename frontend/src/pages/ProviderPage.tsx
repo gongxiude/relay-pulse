@@ -8,6 +8,7 @@ import { Footer } from '../components/Footer';
 import { ChannelTypeIcon, parseChannelType } from '../components/ChannelTypeIcon';
 import { useAuditChannels } from '../hooks/useAuditChannels';
 import { useAuditDiagnosticLatest } from '../hooks/useAuditDiagnosticLatest';
+import { useAuditSyncStatus } from '../hooks/useAuditSyncStatus';
 import { useMonitorData } from '../hooks/useMonitorData';
 import { useRpdiagScores, lookupRpdiagScore } from '../hooks/useRpdiagScores';
 import { useSeoMeta } from '../hooks/useSeoMeta';
@@ -44,6 +45,8 @@ interface ModelDetailRow {
   latestRunId?: string | null;
   compareUrl?: string | null;
   latestMethodologyVersion?: string | null;
+  latestAttemptStatus?: string | null;
+  latestAttemptReason?: string | null;
 }
 
 const SERVICE_TAB_LABELS: Record<ServiceTab, string> = {
@@ -80,6 +83,7 @@ export default function ProviderPage() {
   const normalizedProvider = canonicalize(provider);
   const { channels: auditChannels, loading: auditLoading, error: auditError } = useAuditChannels();
   const { scores: rpdiagScores, loaded: rpdiagLoaded } = useRpdiagScores();
+  const { data: syncStatus } = useAuditSyncStatus();
   const {
     rawData,
     loading: monitorLoading,
@@ -193,10 +197,23 @@ export default function ProviderPage() {
     provider: currentSnapshot?.provider,
     service: currentSnapshot ? inferAuditServiceType(currentSnapshot) : undefined,
     channel: currentSnapshot?.channel,
+    includeFiltered: true,
     limit: 10,
   });
 
   const latestDiagnosticMap = useMemo(() => {
+    const map = new Map<string, typeof latestDiagnostics[number]>();
+    latestDiagnostics.forEach((item) => {
+      if (!item.usable) return;
+      const key = normalizeModelKey(item.run.model);
+      if (key && !map.has(key)) {
+        map.set(key, item);
+      }
+    });
+    return map;
+  }, [latestDiagnostics]);
+
+  const latestAttemptMap = useMemo(() => {
     const map = new Map<string, typeof latestDiagnostics[number]>();
     latestDiagnostics.forEach((item) => {
       const key = normalizeModelKey(item.run.model);
@@ -293,9 +310,11 @@ export default function ProviderPage() {
       .map((modelName) => {
         const rpModel = modelMap.get(normalizeModelKey(modelName));
         const latestDiagnostic = latestDiagnosticMap.get(normalizeModelKey(modelName));
+        const latestAttempt = latestAttemptMap.get(normalizeModelKey(modelName));
         const latestScore = latestDiagnostic?.score?.overall_score ?? null;
-        const localCompareUrl = latestDiagnostic?.run.run_id
-          ? `${langPrefix}/detect/compare/${latestDiagnostic.run.run_id}`
+        const latestAttemptRunId = latestAttempt?.run.run_id ?? null;
+        const localCompareUrl = latestAttemptRunId
+          ? `${langPrefix}/detect/compare/${latestAttemptRunId}`
           : null;
         return {
           id: `${currentSnapshot.newapi_channel_id}-${modelName}`,
@@ -313,9 +332,13 @@ export default function ProviderPage() {
           ttftMs: null,
           enabled: currentSnapshot.enabled,
           sourceKey: inferSourceKey(currentSnapshot),
-          latestRunId: latestDiagnostic?.run.run_id ?? null,
+          latestRunId: latestAttemptRunId,
           compareUrl: localCompareUrl,
           latestMethodologyVersion: latestDiagnostic?.score?.methodology_version ?? latestDiagnostic?.run.methodology_version ?? null,
+          latestAttemptStatus: latestAttempt?.usable
+            ? (latestAttempt?.run.run_status ?? latestAttempt?.run.status ?? null)
+            : (latestAttempt?.filter_reason ?? latestAttempt?.run.run_status ?? latestAttempt?.run.status ?? null),
+          latestAttemptReason: latestAttempt?.run.run_status_reason ?? latestAttempt?.filter_reason ?? null,
         } satisfies ModelDetailRow;
       })
       .sort((a, b) => {
@@ -327,7 +350,7 @@ export default function ProviderPage() {
       ...row,
       id: `${row.id}-${index}`,
     }));
-  }, [currentSnapshot, currentRpdiag, langPrefix, latestDiagnosticMap, matchedMonitor, selectedModel]);
+  }, [currentSnapshot, currentRpdiag, langPrefix, latestAttemptMap, latestDiagnosticMap, matchedMonitor, selectedModel]);
 
   const headerStats = useMemo(() => {
     const total = modelRows.length;
@@ -338,6 +361,12 @@ export default function ProviderPage() {
       issues: Math.max(0, total - healthy),
     };
   }, [modelRows]);
+
+  const showProbeWarning = useMemo(() => {
+    if (!currentSnapshot || latestDiagnosticsLoading) return false;
+    if (latestDiagnostics.length > 0) return false;
+    return Boolean(syncStatus?.probe_runtime?.warning);
+  }, [currentSnapshot, latestDiagnostics.length, latestDiagnosticsLoading, syncStatus]);
 
   const pageTitle = providerDisplayName ? `${providerDisplayName} - 服务商质量排名` : '服务商质量排名';
 
@@ -481,6 +510,20 @@ export default function ProviderPage() {
             </p>
           </section>
 
+          {showProbeWarning && (
+            <section className="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-4 text-sm">
+              <div className="font-semibold text-amber-200">当前通道尚无有效检测样本</div>
+              <p className="mt-1 text-amber-100 leading-relaxed">
+                {syncStatus?.probe_runtime.warning}
+              </p>
+              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-amber-200/90">
+                <span>同步目标 {syncStatus?.targets.enabled ?? 0}/{syncStatus?.targets.total ?? 0}</span>
+                <span>渠道快照 {syncStatus?.channels?.channel_count ?? 0}</span>
+                <span>凭证模式 {syncStatus?.probe_runtime.probe_credential_mode ?? 'missing'}</span>
+              </div>
+            </section>
+          )}
+
           <main className="overflow-x-auto rounded-2xl border border-default/70 bg-surface/55 shadow-xl backdrop-blur-sm">
             {(auditLoading || monitorLoading || latestDiagnosticsLoading) && modelRows.length === 0 ? (
               <div className="px-6 py-16 text-center text-muted">正在加载模型级详情…</div>
@@ -558,10 +601,22 @@ export default function ProviderPage() {
                             rel="noreferrer"
                             className="inline-flex items-center rounded-md bg-blue-500/15 px-2 py-1 text-xs font-semibold text-blue-300 hover:bg-blue-500/20"
                           >
-                            {row.latestMethodologyVersion || '查看结果'}
+                            {row.latestAttemptStatus && row.latestAttemptStatus !== 'done'
+                              ? '失败详情'
+                              : (row.latestMethodologyVersion || '查看结果')}
                           </a>
                         ) : (
-                          <span className="text-muted text-sm">暂无</span>
+                          <div className="space-y-1">
+                            <span className="text-muted text-sm">
+                              {showProbeWarning ? '等待有效样本' : '暂无'}
+                            </span>
+                            {row.latestAttemptStatus && row.latestAttemptStatus !== 'done' ? (
+                              <div className="text-xs text-amber-300">
+                                {row.latestAttemptStatus}
+                                {row.latestAttemptReason ? ` · ${row.latestAttemptReason}` : ''}
+                              </div>
+                            ) : null}
+                          </div>
                         )}
                       </td>
                     </tr>

@@ -31,6 +31,12 @@ export default function DetectComparePage() {
     healthy: data?.dimensions.filter((dimension) => dimension.status === 'pass').length ?? 0,
     issues: data?.dimensions.filter((dimension) => dimension.status !== 'pass').length ?? 0,
   }), [data]);
+  const failedRun = data?.candidate.run.run_status && data.candidate.run.run_status !== 'done';
+  const hasBaseline = Boolean(data?.baseline?.run?.run_id);
+  const candidateOnly = data?.candidate.run.candidate_type === 'candidate_only';
+  const introText = hasBaseline
+    ? '本页展示候选通道与当前可用基线样本的步骤对照、维度分和证据摘要。'
+    : '本页展示当前通道这次检测的步骤、维度分与错误摘要；当前没有可用于对照的 baseline 样本。';
 
   return (
     <>
@@ -48,7 +54,7 @@ export default function DetectComparePage() {
         <main className="flex-1 max-w-7xl mx-auto w-full px-4 py-8 sm:px-6 lg:px-8">
           <section className="mb-6">
             <h1 className="text-3xl font-bold tracking-tight">检测对比详情</h1>
-            <p className="mt-2 text-secondary">本页展示候选通道与最近一次官方基线的步骤对照、维度分和证据摘要。</p>
+            <p className="mt-2 text-secondary">{introText}</p>
           </section>
 
           {loading ? (
@@ -59,6 +65,29 @@ export default function DetectComparePage() {
             <div className="rounded-2xl border border-default bg-surface p-8 text-center text-muted">没有可展示的对比结果。</div>
           ) : (
             <>
+              {failedRun ? (
+                <section className="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-4 text-sm">
+                  <div className="font-semibold text-amber-200">本次检测未成功完成</div>
+                  <p className="mt-1 text-amber-100 leading-relaxed">
+                    {data.candidate.run.run_status_reason || data.candidate.run.run_status}
+                  </p>
+                  <div className="mt-2 text-xs text-amber-200/90">
+                    当前页面仍保留本次失败探针的步骤、错误与维度摘要，便于定位渠道认证或请求问题。
+                  </div>
+                </section>
+              ) : null}
+
+              {!hasBaseline ? (
+                <section className="mb-6 rounded-xl border border-slate-500/30 bg-slate-500/10 px-4 py-4 text-sm text-slate-200">
+                  <div className="font-semibold text-slate-100">当前无对照基线</div>
+                  <p className="mt-1 leading-relaxed">
+                    {candidateOnly
+                      ? '这次检测只生成了单边 candidate 样本，还没有命中同服务、同模型族的 registered baseline。当前分数仍来自本次 quick probe 的过渡性维度摘要。'
+                      : '当前没有可用 baseline 样本，因此本页只展示单边检测结果。'}
+                  </p>
+                </section>
+              ) : null}
+
               <section className="grid gap-4 md:grid-cols-3 mb-6">
                 <div className="rounded-xl border border-default bg-surface p-4">
                   <div className="text-sm text-muted mb-1">候选通道</div>
@@ -66,7 +95,7 @@ export default function DetectComparePage() {
                   <div className="text-sm text-secondary mt-1">{data.candidate.run.channel} / {data.candidate.run.model}</div>
                 </div>
                 <div className="rounded-xl border border-default bg-surface p-4">
-                  <div className="text-sm text-muted mb-1">官方基线</div>
+                  <div className="text-sm text-muted mb-1">{hasBaseline ? '对照基线' : '基线状态'}</div>
                   <div className="text-lg font-semibold">{data.baseline?.run.provider || '未命中基线'}</div>
                   <div className="text-sm text-secondary mt-1">{data.baseline?.run.channel || '—'} / {data.baseline?.run.model || '—'}</div>
                 </div>
@@ -110,7 +139,9 @@ export default function DetectComparePage() {
               </section>
 
               <section className="rounded-2xl border border-default bg-surface overflow-hidden">
-                <div className="border-b border-default/60 px-4 py-3 font-semibold">步骤对照</div>
+                <div className="border-b border-default/60 px-4 py-3 font-semibold">
+                  {hasBaseline ? '步骤对照' : '步骤明细'}
+                </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
@@ -118,8 +149,8 @@ export default function DetectComparePage() {
                         <th className="px-4 py-3 font-medium">步骤</th>
                         <th className="px-4 py-3 font-medium">候选结果</th>
                         <th className="px-4 py-3 font-medium">候选时延</th>
-                        <th className="px-4 py-3 font-medium">基线结果</th>
-                        <th className="px-4 py-3 font-medium">基线时延</th>
+                        <th className="px-4 py-3 font-medium">{hasBaseline ? '基线结果' : '对照结果'}</th>
+                        <th className="px-4 py-3 font-medium">{hasBaseline ? '基线时延' : '对照时延'}</th>
                       </tr>
                     </thead>
                     <tbody>

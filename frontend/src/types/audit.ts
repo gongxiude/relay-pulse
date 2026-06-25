@@ -20,6 +20,35 @@ export interface AuditChannelsResponse {
   };
 }
 
+export interface AuditSyncStatusResponse {
+  success: boolean;
+  data: {
+    newapi_base_url: string;
+    targets: {
+      total: number;
+      enabled: number;
+    };
+    channels?: {
+      snapshot_at?: number;
+      channel_count?: number;
+      enabled_count?: number;
+    } | null;
+    log_cursor?: {
+      name?: string;
+      last_id?: number;
+      last_time?: number;
+      updated_at?: number;
+    } | null;
+    probe_runtime: {
+      probe_credential_mode: 'dedicated' | 'sync_fallback' | 'missing' | string;
+      probe_auth_configured: boolean;
+      probe_user_configured: boolean;
+      probe_ready: boolean;
+      warning?: string;
+    };
+  };
+}
+
 export interface AuditDiagnosticRunSummary {
   run_id: string;
   provider: string;
@@ -27,6 +56,8 @@ export interface AuditDiagnosticRunSummary {
   channel: string;
   model: string;
   status: string;
+  run_status?: string;
+  run_status_reason?: string;
   created_at: number;
   updated_at: number;
   request_model?: string;
@@ -55,6 +86,8 @@ export interface AuditDiagnosticLatestItem {
   run: AuditDiagnosticRunSummary;
   score?: AuditDiagnosticScoreSummary | null;
   compare_url?: string;
+  usable: boolean;
+  filter_reason?: string;
 }
 
 export interface AuditDiagnosticLatestResponse {
@@ -95,6 +128,16 @@ export interface AuditMethodologyResponse {
       done_runs: number;
       dimension_runs: number;
       dimension_row_count: number;
+      failed_auth_runs: number;
+      failed_request_runs: number;
+      filtered_runs: number;
+    };
+    runtime: {
+      probe_credential_mode: 'dedicated' | 'sync_fallback' | 'missing' | string;
+      probe_auth_configured: boolean;
+      probe_user_configured: boolean;
+      probe_ready: boolean;
+      warning?: string;
     };
     dimensions: AuditMethodologyDimension[];
   };

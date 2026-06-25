@@ -1,10 +1,11 @@
 package api
 
 type auditSyncStatusResponse struct {
-	NewAPIBaseURL string             `json:"newapi_base_url"`
-	Targets       auditTargetSummary `json:"targets"`
-	Channels      any                `json:"channels"`
-	LogCursor     any                `json:"log_cursor"`
+	NewAPIBaseURL string                    `json:"newapi_base_url"`
+	Targets       auditTargetSummary        `json:"targets"`
+	Channels      any                       `json:"channels"`
+	LogCursor     any                       `json:"log_cursor"`
+	ProbeRuntime  auditProbeRuntimeResponse `json:"probe_runtime"`
 }
 
 type auditTargetSummary struct {
@@ -39,6 +40,8 @@ type auditDiagnosticRunResponse struct {
 	Channel            string `json:"channel"`
 	Model              string `json:"model"`
 	Status             string `json:"status"`
+	RunStatus          string `json:"run_status,omitempty"`
+	RunStatusReason    string `json:"run_status_reason,omitempty"`
 	CreatedAt          int64  `json:"created_at"`
 	UpdatedAt          int64  `json:"updated_at"`
 	RequestModel       string `json:"request_model,omitempty"`
@@ -142,6 +145,8 @@ type auditDiagnosticLatestItemResponse struct {
 	Run        auditDiagnosticRunResponse    `json:"run"`
 	Score      *auditDiagnosticScoreResponse `json:"score,omitempty"`
 	CompareURL string                        `json:"compare_url,omitempty"`
+	Usable     bool                          `json:"usable"`
+	FilterReason string                     `json:"filter_reason,omitempty"`
 }
 
 type auditDiagnosticLatestResponse struct {
@@ -203,6 +208,17 @@ type auditMethodologyCoverageResponse struct {
 	DoneRuns          int `json:"done_runs"`
 	DimensionRuns     int `json:"dimension_runs"`
 	DimensionRowCount int `json:"dimension_row_count"`
+	FailedAuthRuns    int `json:"failed_auth_runs"`
+	FailedRequestRuns int `json:"failed_request_runs"`
+	FilteredRuns      int `json:"filtered_runs"`
+}
+
+type auditProbeRuntimeResponse struct {
+	ProbeCredentialMode string `json:"probe_credential_mode"`
+	ProbeAuthConfigured bool   `json:"probe_auth_configured"`
+	ProbeUserConfigured bool   `json:"probe_user_configured"`
+	ProbeReady          bool   `json:"probe_ready"`
+	Warning             string `json:"warning,omitempty"`
 }
 
 type auditMethodologySummaryResponse struct {
@@ -219,5 +235,6 @@ type auditMethodologySummaryResponse struct {
 type auditMethodologyResponse struct {
 	Summary    auditMethodologySummaryResponse     `json:"summary"`
 	Coverage   auditMethodologyCoverageResponse    `json:"coverage"`
+	Runtime    auditProbeRuntimeResponse           `json:"runtime"`
 	Dimensions []auditMethodologyDimensionResponse `json:"dimensions"`
 }

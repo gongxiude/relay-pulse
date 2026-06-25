@@ -261,6 +261,15 @@ export default function DetectPage() {
               <div className="rounded-xl border border-danger/30 bg-danger/5 p-5 text-sm text-danger">{methodologyError}</div>
             ) : methodology ? (
               <>
+                {methodology.runtime.warning ? (
+                  <div className="mb-5 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
+                    <div className="font-semibold text-amber-200">主动探针运行态</div>
+                    <div className="mt-1 leading-relaxed">{methodology.runtime.warning}</div>
+                    <div className="mt-2 text-xs text-amber-200/90">
+                      当前模式：{methodology.runtime.probe_credential_mode} / auth {methodology.runtime.probe_auth_configured ? 'ok' : 'missing'} / user {methodology.runtime.probe_user_configured ? 'ok' : 'missing'}
+                    </div>
+                  </div>
+                ) : null}
                 <div className="grid grid-cols-2 gap-4 md:grid-cols-4 mb-5">
                   <MetricCard label="当前版本" value={methodology.summary.version} hint={methodology.summary.weights_hash} />
                   <MetricCard
@@ -276,8 +285,14 @@ export default function DetectPage() {
                   <MetricCard
                     label="样本覆盖"
                     value={`${methodology.coverage.dimension_runs}`}
-                    hint={`done runs ${methodology.coverage.done_runs} / 维度行 ${methodology.coverage.dimension_row_count}`}
+                    hint={`usable ${methodology.coverage.done_runs} / 401失败 ${methodology.coverage.failed_auth_runs} / 请求失败 ${methodology.coverage.failed_request_runs}`}
                   />
+                </div>
+                <div className="mb-5 rounded-xl border border-default bg-surface p-4 text-sm text-secondary">
+                  <div>有效样本：{methodology.coverage.done_runs}</div>
+                  <div>维度样本：{methodology.coverage.dimension_runs}</div>
+                  <div>维度行数：{methodology.coverage.dimension_row_count}</div>
+                  <div>已过滤无效样本：{methodology.coverage.filtered_runs}</div>
                 </div>
                 <div className="rounded-2xl border border-default bg-surface overflow-hidden">
                   <table className="w-full text-sm">

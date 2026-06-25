@@ -7,6 +7,7 @@ interface UseAuditDiagnosticLatestArgs {
   provider?: string;
   service?: string;
   channel?: string;
+  includeFiltered?: boolean;
   limit?: number;
 }
 
@@ -20,6 +21,7 @@ export function useAuditDiagnosticLatest({
   provider,
   service,
   channel,
+  includeFiltered = false,
   limit = 10,
 }: UseAuditDiagnosticLatestArgs): UseAuditDiagnosticLatestResult {
   const [items, setItems] = useState<AuditDiagnosticLatestItem[]>([]);
@@ -31,9 +33,10 @@ export function useAuditDiagnosticLatest({
     if (provider) params.set('provider', provider);
     if (service) params.set('service', service);
     if (channel) params.set('channel', channel);
+    if (includeFiltered) params.set('include_filtered', '1');
     params.set('limit', String(limit));
     return params.toString();
-  }, [provider, service, channel, limit]);
+  }, [provider, service, channel, includeFiltered, limit]);
 
   useEffect(() => {
     if (!provider || !service || !channel) {

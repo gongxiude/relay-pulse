@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"monitor/internal/audit"
+	"monitor/internal/config"
 	"monitor/internal/newapi"
 	"monitor/internal/storage"
 )
@@ -92,8 +93,10 @@ func (h *Handler) GetAuditSyncStatus(c *gin.Context) {
 
 	h.cfgMu.RLock()
 	baseURL := ""
+	runtime := auditProbeRuntimeResponse{}
 	if h.config != nil {
 		baseURL = h.config.NewAPI.BaseURL
+		runtime = buildAuditProbeRuntime(h.config)
 	}
 	h.cfgMu.RUnlock()
 
@@ -104,6 +107,7 @@ func (h *Handler) GetAuditSyncStatus(c *gin.Context) {
 			Targets:       targetSummary,
 			Channels:      channelStats,
 			LogCursor:     cursor,
+			ProbeRuntime:  runtime,
 		},
 	})
 }
@@ -279,13 +283,26 @@ func (h *Handler) GetAuditMethodology(c *gin.Context) {
 	doneRuns := 0
 	dimensionRuns := 0
 	dimensionRowCount := 0
+	failedAuthRuns := 0
+	failedRequestRuns := 0
 	for _, run := range runs {
 		score, err := store.GetDiagnosticScore(run.RunID)
 		if err != nil {
 			apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
 			return
 		}
-		if !isUsableDiagnosticRun(run, score) {
+		usable, reason, _, err := classifyDiagnosticRun(store, run, score)
+		if err != nil {
+			apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+			return
+		}
+		if !usable {
+			switch reason {
+			case "failed_auth":
+				failedAuthRuns++
+			case "failed_request":
+				failedRequestRuns++
+			}
 			continue
 		}
 		doneRuns++
@@ -299,6 +316,12 @@ func (h *Handler) GetAuditMethodology(c *gin.Context) {
 			dimensionRowCount += len(dimensions)
 		}
 	}
+	h.cfgMu.RLock()
+	runtime := auditProbeRuntimeResponse{}
+	if h.config != nil {
+		runtime = buildAuditProbeRuntime(h.config)
+	}
+	h.cfgMu.RUnlock()
 	dimensions := make([]auditMethodologyDimensionResponse, 0, len(spec.Dimensions))
 	for _, dimension := range spec.Dimensions {
 		dimensions = append(dimensions, auditMethodologyDimensionResponse{
@@ -328,7 +351,11 @@ func (h *Handler) GetAuditMethodology(c *gin.Context) {
 				DoneRuns:          doneRuns,
 				DimensionRuns:     dimensionRuns,
 				DimensionRowCount: dimensionRowCount,
+				FailedAuthRuns:    failedAuthRuns,
+				FailedRequestRuns: failedRequestRuns,
+				FilteredRuns:      failedAuthRuns + failedRequestRuns,
 			},
+			Runtime: runtime,
 			Dimensions: dimensions,
 		},
 	})
@@ -352,14 +379,18 @@ func (h *Handler) GetAuditDiagnosticLatest(c *gin.Context) {
 		}
 		limit = value
 	}
-	runs, err := store.ListDiagnosticRuns(storage.DiagnosticRunFilter{
+	includeFiltered := parseBoolQuery(c.Query("include_filtered"))
+	filter := storage.DiagnosticRunFilter{
 		Provider: strings.TrimSpace(c.Query("provider")),
 		Service:  strings.TrimSpace(c.Query("service")),
 		Channel:  strings.TrimSpace(c.Query("channel")),
 		Model:    strings.TrimSpace(c.Query("model")),
-		Status:   "done",
 		Limit:    limit * 10,
-	})
+	}
+	if !includeFiltered {
+		filter.Status = "done"
+	}
+	runs, err := store.ListDiagnosticRuns(filter)
 	if err != nil {
 		apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
 		return
@@ -371,14 +402,30 @@ func (h *Handler) GetAuditDiagnosticLatest(c *gin.Context) {
 			apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
 			return
 		}
-		if !isUsableDiagnosticRun(run, score) {
+		usable, filterReason, classifiedSteps, err := classifyDiagnosticRun(store, run, score)
+		if err != nil {
+			apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+			return
+		}
+		if !includeFiltered && !usable {
 			continue
 		}
-		items = append(items, auditDiagnosticLatestItemResponse{
-			Run:        buildAuditDiagnosticRun(run),
-			Score:      buildAuditDiagnosticScore(run, score),
-			CompareURL: "/api/audit/compare/" + run.RunID,
-		})
+		item := auditDiagnosticLatestItemResponse{
+			Run:          buildAuditDiagnosticRun(run),
+			Score:        buildAuditDiagnosticScore(run, score),
+			Usable:       usable,
+			FilterReason: filterReason,
+		}
+		if !usable && strings.TrimSpace(item.Run.RunStatus) == "" {
+			item.Run.RunStatus = filterReason
+		}
+		if !usable && strings.TrimSpace(item.Run.RunStatusReason) == "" {
+			item.Run.RunStatusReason = summarizeDiagnosticFailureReason(classifiedSteps, filterReason)
+		}
+		if usable {
+			item.CompareURL = "/api/audit/compare/" + run.RunID
+		}
+		items = append(items, item)
 		if len(items) >= limit {
 			break
 		}
@@ -395,19 +442,87 @@ func (h *Handler) GetAuditDiagnosticLatest(c *gin.Context) {
 	})
 }
 
-func isUsableDiagnosticRun(run *storage.DiagnosticRun, score *storage.DiagnosticScore) bool {
+func classifyDiagnosticRun(store auditReadStore, run *storage.DiagnosticRun, score *storage.DiagnosticScore) (bool, string, []*storage.DiagnosticStep, error) {
 	if run == nil || strings.TrimSpace(run.Status) != "done" {
-		return false
+		return false, "not_done", nil, nil
 	}
 	outputMap := decodeAuditJSONMap(run.Output)
-	if strings.HasPrefix(strings.TrimSpace(mapStringValue(outputMap, "run_status")), "failed_") {
-		return false
+	switch strings.TrimSpace(mapStringValue(outputMap, "run_status")) {
+	case "failed_auth":
+		return false, "failed_auth", nil, nil
+	case "failed_request":
+		return false, "failed_request", nil, nil
 	}
+	needsStepInspection := false
 	if skippedTags := decodeAuditJSONStringList(anyJSONValue(outputMap, "tags")); containsString(skippedTags, "request_error") {
-		return false
+		needsStepInspection = true
 	}
 	if score != nil && containsString(decodeAuditJSONStringList(score.Tags), "request_error") {
+		needsStepInspection = true
+	}
+	if needsStepInspection {
+		steps, err := store.ListDiagnosticSteps(run.RunID)
+		if err != nil {
+			return false, "", nil, err
+		}
+		if allDiagnosticStepsMatchError(steps, "401") {
+			return false, "failed_auth", steps, nil
+		}
+		return false, "failed_request", steps, nil
+	}
+	return true, "usable", nil, nil
+}
+
+func parseBoolQuery(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
 		return false
+	}
+}
+
+func summarizeDiagnosticFailureReason(steps []*storage.DiagnosticStep, fallback string) string {
+	if len(steps) == 0 {
+		return fallback
+	}
+	errors := make([]string, 0, len(steps))
+	for _, step := range steps {
+		if step == nil {
+			continue
+		}
+		message := strings.TrimSpace(step.ErrorMessage)
+		if message == "" {
+			continue
+		}
+		stepName := inferDiagnosticStepName(step.StepIndex, step.Prompt)
+		if stepName != "" {
+			errors = append(errors, fmt.Sprintf("%s: %s", stepName, message))
+		} else {
+			errors = append(errors, message)
+		}
+		if len(errors) >= 2 {
+			break
+		}
+	}
+	if len(errors) == 0 {
+		return fallback
+	}
+	return strings.Join(errors, "; ")
+}
+
+func allDiagnosticStepsMatchError(steps []*storage.DiagnosticStep, fragment string) bool {
+	if len(steps) == 0 {
+		return false
+	}
+	fragment = strings.TrimSpace(fragment)
+	if fragment == "" {
+		return false
+	}
+	for _, step := range steps {
+		if step == nil || !strings.Contains(strings.TrimSpace(step.ErrorMessage), fragment) {
+			return false
+		}
 	}
 	return true
 }
@@ -420,6 +535,54 @@ func containsString(items []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func buildAuditProbeRuntime(cfg *config.AppConfig) auditProbeRuntimeResponse {
+	if cfg == nil {
+		return auditProbeRuntimeResponse{
+			ProbeCredentialMode: "missing",
+			ProbeReady:          false,
+			Warning:             "new-api 配置缺失，无法执行主动诊断。",
+		}
+	}
+	probeToken := strings.TrimSpace(cfg.NewAPI.ProbeAccessToken)
+	probeUser := strings.TrimSpace(cfg.NewAPI.ProbeUserID)
+	syncToken := strings.TrimSpace(cfg.NewAPI.AccessToken)
+	syncUser := strings.TrimSpace(cfg.NewAPI.UserID)
+
+	mode := "missing"
+	authConfigured := false
+	userConfigured := false
+	probeReady := false
+	warning := ""
+
+	switch {
+	case probeToken != "" && probeUser != "":
+		mode = "dedicated"
+		authConfigured = true
+		userConfigured = true
+		probeReady = true
+	case syncToken != "" && syncUser != "":
+		mode = "sync_fallback"
+		authConfigured = true
+		userConfigured = true
+		probeReady = true
+		warning = "当前未配置独立主动探针凭证，诊断会回退使用同步凭证；若 /v1/chat/completions 需要单独 token，方法页与详情页会持续没有有效样本。"
+	default:
+		mode = "missing"
+		authConfigured = probeToken != "" || syncToken != ""
+		userConfigured = probeUser != "" || syncUser != ""
+		probeReady = false
+		warning = "主动探针凭证未配置完整，当前只能同步渠道与日志，无法产出有效诊断样本。"
+	}
+
+	return auditProbeRuntimeResponse{
+		ProbeCredentialMode: mode,
+		ProbeAuthConfigured: authConfigured,
+		ProbeUserConfigured: userConfigured,
+		ProbeReady:          probeReady,
+		Warning:             warning,
+	}
 }
 
 func (h *Handler) PostAuditDiagnosticBackfill(c *gin.Context) {
@@ -610,6 +773,7 @@ func buildAuditDiagnosticResponse(run *storage.DiagnosticRun, score *storage.Dia
 		Score: buildAuditDiagnosticScore(run, score),
 		Steps: make([]auditDiagnosticStepResponse, 0, len(steps)),
 	}
+	resp.Run = normalizeAuditDiagnosticRunResponse(resp.Run, steps, score)
 	for _, step := range steps {
 		resp.Steps = append(resp.Steps, buildAuditDiagnosticStep(step))
 	}
@@ -686,6 +850,8 @@ func buildAuditDiagnosticRun(run *storage.DiagnosticRun) auditDiagnosticRunRespo
 		Channel:            run.Channel,
 		Model:              run.Model,
 		Status:             run.Status,
+		RunStatus:          mapStringValue(outputMap, "run_status"),
+		RunStatusReason:    mapStringValue(outputMap, "run_status_reason"),
 		CreatedAt:          run.CreatedAt,
 		UpdatedAt:          run.UpdatedAt,
 		RequestModel:       mapStringValue(inputMap, "request_model"),
@@ -698,6 +864,30 @@ func buildAuditDiagnosticRun(run *storage.DiagnosticRun) auditDiagnosticRunRespo
 		Input:              decodeAuditJSONValue(run.Input),
 		Output:             decodeAuditJSONValue(run.Output),
 	}
+}
+
+func normalizeAuditDiagnosticRunResponse(run auditDiagnosticRunResponse, steps []*storage.DiagnosticStep, score *storage.DiagnosticScore) auditDiagnosticRunResponse {
+	if strings.TrimSpace(run.RunStatus) != "" {
+		if strings.TrimSpace(run.RunStatusReason) == "" && strings.TrimSpace(run.RunStatus) != "done" {
+			run.RunStatusReason = summarizeDiagnosticFailureReason(steps, strings.TrimSpace(run.RunStatus))
+		}
+		return run
+	}
+	if strings.TrimSpace(run.Status) != "done" {
+		return run
+	}
+	hasRequestError := score != nil && containsString(decodeAuditJSONStringList(score.Tags), "request_error")
+	if !hasRequestError {
+		return run
+	}
+	if allDiagnosticStepsMatchError(steps, "401") {
+		run.RunStatus = "failed_auth"
+		run.RunStatusReason = summarizeDiagnosticFailureReason(steps, "failed_auth")
+		return run
+	}
+	run.RunStatus = "failed_request"
+	run.RunStatusReason = summarizeDiagnosticFailureReason(steps, "failed_request")
+	return run
 }
 
 func buildAuditDiagnosticScore(run *storage.DiagnosticRun, score *storage.DiagnosticScore) *auditDiagnosticScoreResponse {

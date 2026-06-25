@@ -15,6 +15,25 @@
 | 首批真实种子数据 | 对现有启用通道生成一批可看的诊断结果 | 详情页不是空表，至少有可解释的样本 |
 | 页面真实填充 | `/p/:provider`、检测方法页、compare 详情页使用本地真实审计数据 | 页面不再只显示静态说明或占位 |
 
+## 1.1 当前执行进度（2026-06-25）
+
+以下状态基于本仓库当前代码、`go test`、`npm run build` 和 `docker compose` 运行态，不是计划预期值。
+
+| 项目 | 当前状态 | 当前证据 |
+|---|---|---|
+| 方法论 schema | 已落地 | `/api/audit/methodology` 已返回 `summary + coverage + runtime + dimensions` |
+| compare schema | 已落地 | `/api/audit/compare/:run_id` 已返回 `group/candidate/baseline/dimensions/steps/summary`，且 legacy 失败样本也会补 `run_status/run_status_reason` |
+| 无效样本过滤 | 已落地 | `failed_auth/failed_request/request_error` 不再进入 `latest` 和方法页 coverage |
+| 本地运行态 | 已验证 | `docker compose up -d --build monitor` 可启动，`http://localhost:8080` 可访问 |
+| 当前真实同步数据 | 已有 | `targets.total=149`、`targets.enabled=45`、`channels.channel_count=10` |
+| 当前真实诊断样本 | 仍为空 | `GET /api/audit/diagnostics/latest` 返回空；`methodology.coverage.done_runs=0` |
+| 空样本原因暴露 | 已落地 | `methodology.runtime.warning` 与 `sync.status.probe_runtime.warning` 已返回 |
+| 详情页空样本提示 | 已落地 | `/p/:provider` 在无有效样本时显示 `sync_fallback` / probe warning，而不是静默显示“暂无” |
+| 失败探针摘要透出 | 已落地 | `GET /api/audit/diagnostics/latest?include_filtered=1` 可返回最近失败 run；当前 3 条真实历史样本已被正确识别为 `failed_auth`，并带 `ping: http 401; identity: http 401` 摘要 |
+| 失败样本详情页 | 已落地 | 失败 run 也可跳到 `/detect/compare/:runId`，页面会展示 step 级 `http 401` 等错误；在 `candidate_only + 无 baseline` 场景下不再误写成“最近一次官方基线对比” |
+
+当前运行态的直接结论是：系统已经能同步 `new-api` 渠道和日志，也能正确过滤无效 401/请求失败样本，但由于当前只配置了同步凭证回退模式，尚未拿到可用于 `/v1/chat/completions` 的独立主动探针凭证，所以首批真实 compare 样本还没有落库成功。
+
 ## 2. 运行时边界与输入
 
 执行本计划时，边界固定如下：
@@ -37,10 +56,12 @@
 
 | 接口 | 当前状态 | 已确认数据 |
 |---|---|---|
-| `/api/audit/newapi/sync/status` | 有真实值 | `targets.total=149`、`targets.enabled=50`、`channels.channel_count=10`、`channels.enabled_count=3`、`log_cursor.last_id=832312` |
+| `/api/audit/newapi/sync/status` | 有真实值 | `targets.total=149`、`targets.enabled=50`、`channels.channel_count=10`、`channels.enabled_count=3`、`log_cursor.last_id=833394`、`probe_runtime.probe_credential_mode=sync_fallback` |
 | `/api/audit/targets` | 有真实值 | 已生成 `provider + service + channel + model + request_model + enabled` 审计对象 |
 | `/api/audit/ranking?window=24h` | 有真实值 | 已有生产日志聚合结果：`total/success/error/timeout/success_rate/p95/p99/tokens_per_second/avg_frt/score` |
 | `/api/audit/channels` | 有真实值 | 已能显示 `new-api` 同步过来的渠道快照和启停状态 |
+| `/api/audit/diagnostics/latest?include_filtered=1` | 有真实值 | 当前已有 3 条真实失败样本，均为 `failed_auth`，并带 `ping: http 401; identity: http 401` 摘要 |
+| `/api/audit/compare/:run_id` | 有真实值 | 失败样本也可查看 step 级 `http 401`、过渡性维度分和 `candidate_only`/无 baseline 状态 |
 
 这部分说明当前系统已经具备：
 
@@ -52,12 +73,12 @@
 
 | 数据链路 | 当前问题 | 影响页面 |
 |---|---|---|
-| `POST /api/audit/diagnostics` 产出的 run 数据 | 已能生成 run/group/dimensions，但仍是单目标手动触发，缺批量回填 | 检测方法页、详情页 |
-| `GET /api/audit/diagnostics/:run_id` | 已结构化，但还缺“最近一次摘要 / 最近一次成功结果”查询口径 | 详情页无法直接显示最近结果 |
-| `GET /api/audit/compare/:run_id` | 已能返回 `group/candidate/baseline/dimensions/steps/summary`，但前端尚未消费 | compare 页、本地详情页 |
+| `POST /api/audit/diagnostics` 产出的 run 数据 | 已能生成 run/group/dimensions，也能落失败样本，但仍缺“成功样本批量回填” | 检测方法页、详情页 |
+| `GET /api/audit/diagnostics/:run_id` / `latest` | 已结构化，且已支持失败样本与最近摘要；当前缺的是“最近一次成功结果”而不是“完全没有摘要口径” | 详情页、方法页 |
+| `GET /api/audit/compare/:run_id` | 前后端都已消费，但当前展示的主要还是失败单边样本，不是成功 baseline 对照样本 | compare 页、本地详情页 |
 | baseline 历史窗口 | 已有 baseline run 表与分组表，但当前只取最近一次注册基线，未实现近 3 次窗口 | 无法完整对齐 rpdiag v3.24.1 |
 | 25 维 method data | 当前仅实现 6 个 baseline-aware 维度 + 3 个 legacy summary | 页面只能显示第一版结果，不能冒充完整 rpdiag |
-| 首批诊断样本 | 还没有为 enabled targets 批量生成最近结果 | 用户点进去看到的大多还是空 |
+| 首批成功诊断样本 | 还没有为 enabled targets 批量生成成功结果；当前真实样本全部是 `failed_auth` | 质量分、baseline 对照、成功 compare 详情 |
 
 ## 4. 当前代码边界
 
