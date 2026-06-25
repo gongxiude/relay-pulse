@@ -132,21 +132,32 @@ type auditCompareSummaryResponse struct {
 	Tags              []string `json:"tags,omitempty"`
 }
 
+type auditDiagnosticDimensionResponse struct {
+	RunID           string  `json:"run_id"`
+	DimensionKey    string  `json:"dimension_key"`
+	Weight          int     `json:"weight"`
+	Score           float64 `json:"score"`
+	NormalizedScore float64 `json:"normalized_score"`
+	Status          string  `json:"status"`
+	Reason          string  `json:"reason"`
+	Evidence        any     `json:"evidence,omitempty"`
+}
+
 type auditCompareResponse struct {
-	Group      auditCompareGroupResponse   `json:"group"`
-	Candidate  auditDiagnosticResponse     `json:"candidate"`
-	Baseline   *auditDiagnosticResponse    `json:"baseline,omitempty"`
-	Dimensions []any                       `json:"dimensions"`
-	Steps      []auditCompareStepResponse  `json:"steps"`
-	Summary    auditCompareSummaryResponse `json:"summary"`
+	Group      auditCompareGroupResponse          `json:"group"`
+	Candidate  auditDiagnosticResponse            `json:"candidate"`
+	Baseline   *auditDiagnosticResponse           `json:"baseline,omitempty"`
+	Dimensions []auditDiagnosticDimensionResponse `json:"dimensions"`
+	Steps      []auditCompareStepResponse         `json:"steps"`
+	Summary    auditCompareSummaryResponse        `json:"summary"`
 }
 
 type auditDiagnosticLatestItemResponse struct {
-	Run        auditDiagnosticRunResponse    `json:"run"`
-	Score      *auditDiagnosticScoreResponse `json:"score,omitempty"`
-	CompareURL string                        `json:"compare_url,omitempty"`
-	Usable     bool                          `json:"usable"`
-	FilterReason string                     `json:"filter_reason,omitempty"`
+	Run          auditDiagnosticRunResponse    `json:"run"`
+	Score        *auditDiagnosticScoreResponse `json:"score,omitempty"`
+	CompareURL   string                        `json:"compare_url,omitempty"`
+	Usable       bool                          `json:"usable"`
+	FilterReason string                        `json:"filter_reason,omitempty"`
 }
 
 type auditDiagnosticLatestResponse struct {

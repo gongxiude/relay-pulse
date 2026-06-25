@@ -78,7 +78,7 @@ type diagnosticRunResult struct {
 
 var quickProbeSteps = []diagnosticStepDef{
 	{Name: "ping", Prompt: "ping"},
-	{Name: "identity", Prompt: "请用一句话说明你是谁，你的模型名称是什么？"},
+	{Name: "identity", Prompt: "请严格按三行输出，不要解释：vendor: <提供商>; brand: <品牌>; model: <模型名>"},
 	{Name: "cutoff", Prompt: "请直接回答你的知识截止日期。"},
 	{Name: "identity_free", Prompt: "不要重复上文，直接说出你的身份与版本。"},
 	{Name: "knowledge_recall", Prompt: "请简洁回答：地球围绕太阳公转一周大约多少天？"},
@@ -466,7 +466,7 @@ func readSSE(r io.Reader) (string, time.Duration, []string, string, string, map[
 				firstChunkAt = time.Now()
 			}
 			chunks = append(chunks, payload)
-			if responseModel == "" || usage == nil {
+			if responseModel == "" || usage == nil || finish == "" {
 				var message map[string]any
 				if err := json.Unmarshal([]byte(payload), &message); err == nil {
 					if model, ok := message["model"].(string); ok && strings.TrimSpace(model) != "" {
@@ -474,6 +474,9 @@ func readSSE(r io.Reader) (string, time.Duration, []string, string, string, map[
 					}
 					if rawUsage, ok := message["usage"].(map[string]any); ok && len(rawUsage) > 0 {
 						usage = rawUsage
+					}
+					if finish == "" {
+						finish = extractFinishReason(message)
 					}
 				}
 			}
@@ -485,7 +488,9 @@ func readSSE(r io.Reader) (string, time.Duration, []string, string, string, map[
 		return builder.String(), 0, chunks, finish, responseModel, usage, err
 	}
 	if !firstChunkAt.IsZero() {
-		finish = "sse"
+		if strings.TrimSpace(finish) == "" {
+			finish = "sse"
+		}
 		return builder.String(), firstChunkAt.Sub(start), chunks, finish, responseModel, usage, nil
 	}
 	return builder.String(), 0, chunks, finish, responseModel, usage, nil
@@ -570,8 +575,14 @@ func summaryDimensionsForRun(runID string, score *storage.DiagnosticScore, tags 
 func baselineAwareDimensions(runID string, steps []*storage.DiagnosticStep, baselineSteps []*storage.DiagnosticStep, createdAt int64) []*storage.DiagnosticDimension {
 	byName := stepMapByName(steps)
 	baselineByName := stepMapByName(baselineSteps)
-	out := make([]*storage.DiagnosticDimension, 0, 6)
+	out := make([]*storage.DiagnosticDimension, 0, 10)
 	out = append(out, scoreModelMatch(runID, steps, baselineSteps, createdAt))
+	out = append(out, scoreServiceTierPresent(runID, steps, baselineSteps, createdAt))
+	out = append(out, scoreAnthropicRequestIDPassthrough(runID, steps, baselineSteps, createdAt))
+	out = append(out, scoreStopReasonPresent(runID, steps, baselineSteps, createdAt))
+	if candidate, ok := byName["identity"]; ok {
+		out = append(out, scoreIdentityStructuredMatch(runID, candidate, baselineByName["identity"], createdAt))
+	}
 	if candidate, ok := byName["identity_free"]; ok {
 		out = append(out, scoreIdentityFreeClean(runID, candidate, baselineByName["identity_free"], createdAt))
 		out = append(out, scoreInstructionFollowingLang(runID, candidate, baselineByName["identity_free"], createdAt))
@@ -584,6 +595,116 @@ func baselineAwareDimensions(runID string, steps []*storage.DiagnosticStep, base
 	}
 	out = append(out, scoreLatencyBaselineMatch(runID, steps, baselineSteps, createdAt))
 	return out
+}
+
+func scoreServiceTierPresent(runID string, steps []*storage.DiagnosticStep, baselineSteps []*storage.DiagnosticStep, createdAt int64) *storage.DiagnosticDimension {
+	candidateValues := collectServiceTierValues(steps)
+	baselineValues := collectServiceTierValues(baselineSteps)
+	score := 0.0
+	status := "skip"
+	reason := "service_tier unavailable"
+	switch {
+	case len(candidateValues) > 0:
+		score = 10
+		status = "pass"
+		if len(baselineValues) > 0 {
+			reason = "candidate exposes service_tier like baseline"
+		} else {
+			reason = "candidate exposes service_tier"
+		}
+	case len(baselineValues) > 0:
+		score = 0
+		status = "fail"
+		reason = "candidate missing service_tier exposed by baseline"
+	}
+	return &storage.DiagnosticDimension{
+		RunID:           runID,
+		DimensionKey:    "service_tier_present",
+		Weight:          6,
+		Score:           score,
+		NormalizedScore: score * 10,
+		Status:          status,
+		Reason:          reason,
+		Evidence: mustJSON(map[string]any{
+			"candidate_values": candidateValues,
+			"baseline_values":  baselineValues,
+		}),
+		CreatedAt: createdAt,
+	}
+}
+
+func scoreAnthropicRequestIDPassthrough(runID string, steps []*storage.DiagnosticStep, baselineSteps []*storage.DiagnosticStep, createdAt int64) *storage.DiagnosticDimension {
+	candidateIDs := collectRequestIDChain(steps)
+	baselineIDs := collectRequestIDChain(baselineSteps)
+	candidateHasReq := containsReqID(candidateIDs)
+	baselineHasReq := containsReqID(baselineIDs)
+	score := 0.0
+	status := "skip"
+	reason := "request id chain unavailable"
+	switch {
+	case candidateHasReq:
+		score = 10
+		status = "pass"
+		if baselineHasReq {
+			reason = "candidate preserves upstream req_* request id like baseline"
+		} else {
+			reason = "candidate exposes upstream req_* request id"
+		}
+	case baselineHasReq:
+		score = 0
+		status = "fail"
+		reason = "candidate missing upstream req_* request id exposed by baseline"
+	}
+	return &storage.DiagnosticDimension{
+		RunID:           runID,
+		DimensionKey:    "anthropic_request_id_passthrough",
+		Weight:          4,
+		Score:           score,
+		NormalizedScore: score * 10,
+		Status:          status,
+		Reason:          reason,
+		Evidence: mustJSON(map[string]any{
+			"candidate_request_ids": candidateIDs,
+			"baseline_request_ids":  baselineIDs,
+		}),
+		CreatedAt: createdAt,
+	}
+}
+
+func scoreStopReasonPresent(runID string, steps []*storage.DiagnosticStep, baselineSteps []*storage.DiagnosticStep, createdAt int64) *storage.DiagnosticDimension {
+	candidateReasons := collectFinishReasons(steps)
+	baselineReasons := collectFinishReasons(baselineSteps)
+	score := 0.0
+	status := "skip"
+	reason := "stop reason unavailable"
+	switch {
+	case len(candidateReasons) > 0:
+		score = 10
+		status = "pass"
+		if len(baselineReasons) > 0 {
+			reason = "candidate exposes stop reason like baseline"
+		} else {
+			reason = "candidate exposes stop reason"
+		}
+	case len(baselineReasons) > 0:
+		score = 0
+		status = "fail"
+		reason = "candidate missing stop reason exposed by baseline"
+	}
+	return &storage.DiagnosticDimension{
+		RunID:           runID,
+		DimensionKey:    "stop_reason_present",
+		Weight:          3,
+		Score:           score,
+		NormalizedScore: score * 10,
+		Status:          status,
+		Reason:          reason,
+		Evidence: mustJSON(map[string]any{
+			"candidate_reasons": candidateReasons,
+			"baseline_reasons":  baselineReasons,
+		}),
+		CreatedAt: createdAt,
+	}
 }
 
 func scoreModelMatch(runID string, steps []*storage.DiagnosticStep, baselineSteps []*storage.DiagnosticStep, createdAt int64) *storage.DiagnosticDimension {
@@ -657,6 +778,60 @@ func stepMapByName(steps []*storage.DiagnosticStep) map[string]*storage.Diagnost
 		out[name] = step
 	}
 	return out
+}
+
+type structuredIdentity struct {
+	Vendor string `json:"vendor"`
+	Brand  string `json:"brand"`
+	Model  string `json:"model"`
+}
+
+func scoreIdentityStructuredMatch(runID string, candidate *storage.DiagnosticStep, baseline *storage.DiagnosticStep, createdAt int64) *storage.DiagnosticDimension {
+	candidateText := visibleTextFromStep(candidate)
+	baselineText := visibleTextFromStep(baseline)
+	candidateIdentity, candidateOK := extractStructuredIdentity(candidateText)
+	baselineIdentity, baselineOK := extractStructuredIdentity(baselineText)
+	score := 0.0
+	status := "skip"
+	reason := "structured identity unavailable"
+
+	if candidateOK && baselineOK {
+		candidateModelFamily := diagnosticModelFamily(candidateIdentity.Model)
+		baselineModelFamily := diagnosticModelFamily(baselineIdentity.Model)
+		switch {
+		case equalStructuredIdentity(candidateIdentity, baselineIdentity):
+			score = 10
+			status = "pass"
+			reason = "candidate structured identity matches baseline"
+		case strings.EqualFold(strings.TrimSpace(candidateIdentity.Vendor), strings.TrimSpace(baselineIdentity.Vendor)) &&
+			strings.EqualFold(strings.TrimSpace(candidateIdentity.Brand), strings.TrimSpace(baselineIdentity.Brand)) &&
+			candidateModelFamily != "" && candidateModelFamily == baselineModelFamily:
+			score = 8
+			status = "partial"
+			reason = "candidate structured identity matches baseline family but differs in exact model string"
+		default:
+			score = 0
+			status = "fail"
+			reason = "candidate structured identity deviates from baseline"
+		}
+	}
+
+	return &storage.DiagnosticDimension{
+		RunID:           runID,
+		DimensionKey:    "identity_structured_match",
+		Weight:          7,
+		Score:           score,
+		NormalizedScore: score * 10,
+		Status:          status,
+		Reason:          reason,
+		Evidence: mustJSON(map[string]any{
+			"candidate_text":     candidateText,
+			"baseline_text":      baselineText,
+			"candidate_identity": candidateIdentity,
+			"baseline_identity":  baselineIdentity,
+		}),
+		CreatedAt: createdAt,
+	}
 }
 
 func stepNameForStorageStep(step *storage.DiagnosticStep) string {
@@ -888,6 +1063,7 @@ type cutoffMonth struct {
 var (
 	cutoffYearMonthPattern = regexp.MustCompile(`(20\d{2})\D{0,3}(0?[1-9]|1[0-2])`)
 	dayCountPattern        = regexp.MustCompile(`\d+`)
+	identitySeparator      = regexp.MustCompile(`[:：]`)
 )
 
 func requestModelFromMeta(meta map[string]any) string {
@@ -948,6 +1124,92 @@ func extractKnowledgeRecallValue(text string) (int, bool) {
 	return value, true
 }
 
+func extractStructuredIdentity(text string) (structuredIdentity, bool) {
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	identity := structuredIdentity{}
+	freeForm := make([]string, 0, 3)
+	for _, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		if line == "" {
+			continue
+		}
+		freeForm = append(freeForm, line)
+		lower := strings.ToLower(line)
+		value := parseIdentityFieldValue(line)
+		switch {
+		case strings.HasPrefix(lower, "vendor"):
+			identity.Vendor = value
+		case strings.HasPrefix(lower, "brand"):
+			identity.Brand = value
+		case strings.HasPrefix(lower, "model"):
+			identity.Model = value
+		case strings.HasPrefix(lower, "提供商"):
+			identity.Vendor = value
+		case strings.HasPrefix(lower, "品牌"):
+			identity.Brand = value
+		case strings.HasPrefix(lower, "模型"):
+			identity.Model = value
+		}
+	}
+	if identity.Vendor == "" && len(freeForm) >= 3 {
+		identity.Vendor = parseIdentityFieldValue(freeForm[0])
+	}
+	if identity.Brand == "" && len(freeForm) >= 3 {
+		identity.Brand = parseIdentityFieldValue(freeForm[1])
+	}
+	if identity.Model == "" && len(freeForm) >= 3 {
+		identity.Model = parseIdentityFieldValue(freeForm[2])
+	}
+	if strings.TrimSpace(identity.Vendor) == "" ||
+		strings.TrimSpace(identity.Brand) == "" ||
+		strings.TrimSpace(identity.Model) == "" {
+		return structuredIdentity{}, false
+	}
+	return structuredIdentity{
+		Vendor: strings.TrimSpace(identity.Vendor),
+		Brand:  strings.TrimSpace(identity.Brand),
+		Model:  strings.TrimSpace(identity.Model),
+	}, true
+}
+
+func parseIdentityFieldValue(line string) string {
+	parts := identitySeparator.Split(strings.TrimSpace(line), 2)
+	if len(parts) == 2 {
+		return strings.TrimSpace(parts[1])
+	}
+	return strings.TrimSpace(line)
+}
+
+func equalStructuredIdentity(a, b structuredIdentity) bool {
+	return strings.EqualFold(strings.TrimSpace(a.Vendor), strings.TrimSpace(b.Vendor)) &&
+		strings.EqualFold(strings.TrimSpace(a.Brand), strings.TrimSpace(b.Brand)) &&
+		strings.EqualFold(strings.TrimSpace(a.Model), strings.TrimSpace(b.Model))
+}
+
+func extractFinishReason(message map[string]any) string {
+	if len(message) == 0 {
+		return ""
+	}
+	if value, ok := message["stop_reason"].(string); ok && strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
+	}
+	if choices, ok := message["choices"].([]any); ok {
+		for _, choice := range choices {
+			choiceMap, ok := choice.(map[string]any)
+			if !ok {
+				continue
+			}
+			if value, ok := choiceMap["finish_reason"].(string); ok && strings.TrimSpace(value) != "" {
+				return strings.TrimSpace(value)
+			}
+			if value, ok := choiceMap["stop_reason"].(string); ok && strings.TrimSpace(value) != "" {
+				return strings.TrimSpace(value)
+			}
+		}
+	}
+	return ""
+}
+
 type latencyStats struct {
 	headerMedian float64
 	ttftMedian   float64
@@ -991,6 +1253,94 @@ func relativeLatencyScore(candidate, baseline float64) float64 {
 		return 0
 	}
 	return (2 - ratio) * 10
+}
+
+func collectServiceTierValues(steps []*storage.DiagnosticStep) []string {
+	values := make([]string, 0, len(steps))
+	for _, step := range steps {
+		meta := decodeStepMeta(step.ExecutionMeta)
+		usage, ok := meta["usage"].(map[string]any)
+		if !ok || len(usage) == 0 {
+			continue
+		}
+		if value, ok := usage["service_tier"].(string); ok && strings.TrimSpace(value) != "" {
+			values = append(values, strings.TrimSpace(value))
+		}
+	}
+	return uniqueSortedStrings(values)
+}
+
+func collectRequestIDChain(steps []*storage.DiagnosticStep) []string {
+	values := make([]string, 0, len(steps))
+	for _, step := range steps {
+		meta := decodeStepMeta(step.ExecutionMeta)
+		headers, ok := meta["response_headers"].(map[string]any)
+		if !ok || len(headers) == 0 {
+			if typedHeaders, ok := meta["response_headers"].(map[string]string); ok {
+				for key, value := range typedHeaders {
+					if isRequestIDHeader(key) && strings.TrimSpace(value) != "" {
+						values = append(values, splitHeaderValues(value)...)
+					}
+				}
+			}
+			continue
+		}
+		for key, value := range headers {
+			if !isRequestIDHeader(key) {
+				continue
+			}
+			text := strings.TrimSpace(fmt.Sprint(value))
+			if text == "" {
+				continue
+			}
+			values = append(values, splitHeaderValues(text)...)
+		}
+	}
+	return uniqueSortedStrings(values)
+}
+
+func collectFinishReasons(steps []*storage.DiagnosticStep) []string {
+	values := make([]string, 0, len(steps))
+	for _, step := range steps {
+		meta := decodeStepMeta(step.ExecutionMeta)
+		value := strings.TrimSpace(fmt.Sprint(meta["finish_reason"]))
+		if value == "" || strings.EqualFold(value, "<nil>") || strings.EqualFold(value, "sse") || strings.EqualFold(value, "non_stream") {
+			continue
+		}
+		values = append(values, value)
+	}
+	return uniqueSortedStrings(values)
+}
+
+func isRequestIDHeader(key string) bool {
+	key = strings.TrimSpace(strings.ToLower(key))
+	switch key {
+	case "request-id", "x-request-id", "request_id", "anthropic-request-id":
+		return true
+	default:
+		return false
+	}
+}
+
+func splitHeaderValues(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func containsReqID(values []string) bool {
+	for _, value := range values {
+		if strings.Contains(strings.TrimSpace(strings.ToLower(value)), "req_") {
+			return true
+		}
+	}
+	return false
 }
 
 func averageNonZero(values ...float64) float64 {

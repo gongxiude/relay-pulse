@@ -273,8 +273,7 @@ func (h *Handler) GetAuditMethodology(c *gin.Context) {
 	}
 	spec := audit.CurrentMethodologySpec()
 	runs, err := store.ListDiagnosticRuns(storage.DiagnosticRunFilter{
-		Status: "done",
-		Limit:  1000,
+		Limit: 1000,
 	})
 	if err != nil {
 		apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
@@ -355,7 +354,7 @@ func (h *Handler) GetAuditMethodology(c *gin.Context) {
 				FailedRequestRuns: failedRequestRuns,
 				FilteredRuns:      failedAuthRuns + failedRequestRuns,
 			},
-			Runtime: runtime,
+			Runtime:    runtime,
 			Dimensions: dimensions,
 		},
 	})
@@ -443,7 +442,17 @@ func (h *Handler) GetAuditDiagnosticLatest(c *gin.Context) {
 }
 
 func classifyDiagnosticRun(store auditReadStore, run *storage.DiagnosticRun, score *storage.DiagnosticScore) (bool, string, []*storage.DiagnosticStep, error) {
-	if run == nil || strings.TrimSpace(run.Status) != "done" {
+	if run == nil {
+		return false, "not_done", nil, nil
+	}
+	switch strings.TrimSpace(run.Status) {
+	case "failed_auth":
+		return false, "failed_auth", nil, nil
+	case "failed_request":
+		return false, "failed_request", nil, nil
+	case "", "done":
+		// 继续走 output / step 级回溯，兼容旧样本。
+	default:
 		return false, "not_done", nil, nil
 	}
 	outputMap := decodeAuditJSONMap(run.Output)
@@ -808,9 +817,9 @@ func buildAuditCompareResponse(candidate auditDiagnosticResponse, baseline *audi
 		summary.SkippedDimensions = candidate.Score.SkippedDimensions
 		summary.Tags = candidate.Score.Tags
 	}
-	dimensionPayload := make([]any, 0, len(dimensions))
+	dimensionPayload := make([]auditDiagnosticDimensionResponse, 0, len(dimensions))
 	for _, dimension := range dimensions {
-		dimensionPayload = append(dimensionPayload, dimension)
+		dimensionPayload = append(dimensionPayload, buildAuditDiagnosticDimension(dimension))
 	}
 	groupResp := auditCompareGroupResponse{
 		GroupID:            candidate.Run.GroupID,
@@ -834,6 +843,22 @@ func buildAuditCompareResponse(candidate auditDiagnosticResponse, baseline *audi
 		Dimensions: dimensionPayload,
 		Steps:      steps,
 		Summary:    summary,
+	}
+}
+
+func buildAuditDiagnosticDimension(dimension *storage.DiagnosticDimension) auditDiagnosticDimensionResponse {
+	if dimension == nil {
+		return auditDiagnosticDimensionResponse{}
+	}
+	return auditDiagnosticDimensionResponse{
+		RunID:           dimension.RunID,
+		DimensionKey:    dimension.DimensionKey,
+		Weight:          dimension.Weight,
+		Score:           dimension.Score,
+		NormalizedScore: dimension.NormalizedScore,
+		Status:          dimension.Status,
+		Reason:          dimension.Reason,
+		Evidence:        decodeAuditJSONValue(dimension.Evidence),
 	}
 }
 

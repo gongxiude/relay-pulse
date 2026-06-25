@@ -271,6 +271,7 @@ func TestBuildDimensionsForRunWithBaselineAwareScorers(t *testing.T) {
 				"step_name":      "identity",
 				"response_model": "claude-sonnet-4-6",
 				"request_body":   map[string]any{"model": "claude-sonnet-4-6"},
+				"response_text":  "data: {\"choices\":[{\"delta\":{\"content\":\"vendor: Anthropic\\nbrand: Claude\\nmodel: claude-sonnet-4-6\"}}]}",
 			}),
 		},
 		{
@@ -285,10 +286,13 @@ func TestBuildDimensionsForRunWithBaselineAwareScorers(t *testing.T) {
 			StepIndex: 1,
 			Prompt:    "ping",
 			ExecutionMeta: mustJSON(map[string]any{
-				"step_name":     "ping",
-				"latency_ms":    180,
-				"ttft_ms":       240,
-				"first_text_ms": 240,
+				"step_name":         "ping",
+				"latency_ms":        180,
+				"ttft_ms":           240,
+				"first_text_ms":     240,
+				"finish_reason":     "stop",
+				"usage":             map[string]any{"service_tier": "standard"},
+				"response_headers":  map[string]any{"request-id": "req_candidate_01"},
 			}),
 		},
 		{
@@ -316,6 +320,7 @@ func TestBuildDimensionsForRunWithBaselineAwareScorers(t *testing.T) {
 				"step_name":      "identity",
 				"response_model": "claude-sonnet-4-6",
 				"request_body":   map[string]any{"model": "claude-sonnet-4-6"},
+				"response_text":  "data: {\"choices\":[{\"delta\":{\"content\":\"vendor: Anthropic\\nbrand: Claude\\nmodel: claude-sonnet-4-6\"}}]}",
 			}),
 		},
 		{
@@ -330,10 +335,13 @@ func TestBuildDimensionsForRunWithBaselineAwareScorers(t *testing.T) {
 			StepIndex: 1,
 			Prompt:    "ping",
 			ExecutionMeta: mustJSON(map[string]any{
-				"step_name":     "ping",
-				"latency_ms":    90,
-				"ttft_ms":       100,
-				"first_text_ms": 100,
+				"step_name":         "ping",
+				"latency_ms":        90,
+				"ttft_ms":           100,
+				"first_text_ms":     100,
+				"finish_reason":     "stop",
+				"usage":             map[string]any{"service_tier": "standard"},
+				"response_headers":  map[string]any{"request-id": "req_baseline_01"},
 			}),
 		},
 		{
@@ -355,7 +363,7 @@ func TestBuildDimensionsForRunWithBaselineAwareScorers(t *testing.T) {
 	}
 
 	dimensions := buildDimensionsForRun("run-1", score, []string{"buffered_stream"}, candidateSteps, baselineSteps, 1710000200)
-	if len(dimensions) != 9 {
+	if len(dimensions) != 13 {
 		t.Fatalf("unexpected dimensions len: %d", len(dimensions))
 	}
 	found := make(map[string]*storage.DiagnosticDimension, len(dimensions))
@@ -367,6 +375,18 @@ func TestBuildDimensionsForRunWithBaselineAwareScorers(t *testing.T) {
 	}
 	if found["model_match"] == nil || found["model_match"].Status != "pass" {
 		t.Fatalf("unexpected model_match: %+v", found["model_match"])
+	}
+	if found["identity_structured_match"] == nil || found["identity_structured_match"].Status != "pass" {
+		t.Fatalf("unexpected identity_structured_match: %+v", found["identity_structured_match"])
+	}
+	if found["service_tier_present"] == nil || found["service_tier_present"].Status != "pass" {
+		t.Fatalf("unexpected service_tier_present: %+v", found["service_tier_present"])
+	}
+	if found["anthropic_request_id_passthrough"] == nil || found["anthropic_request_id_passthrough"].Status != "pass" {
+		t.Fatalf("unexpected anthropic_request_id_passthrough: %+v", found["anthropic_request_id_passthrough"])
+	}
+	if found["stop_reason_present"] == nil || found["stop_reason_present"].Status != "pass" {
+		t.Fatalf("unexpected stop_reason_present: %+v", found["stop_reason_present"])
 	}
 	if found["cutoff_match"] == nil || found["cutoff_match"].Status != "pass" {
 		t.Fatalf("unexpected cutoff_match: %+v", found["cutoff_match"])

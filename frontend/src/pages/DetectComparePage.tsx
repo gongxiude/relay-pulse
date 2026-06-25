@@ -20,6 +20,17 @@ function scoreBadgeClass(score?: number | null) {
   return 'bg-emerald-500/15 text-emerald-300';
 }
 
+function formatEvidence(value: Record<string, unknown> | null | undefined) {
+  if (!value || Object.keys(value).length === 0) {
+    return null;
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return null;
+  }
+}
+
 export default function DetectComparePage() {
   const { runId } = useParams<{ runId: string }>();
   const location = useLocation();
@@ -130,7 +141,19 @@ export default function DetectComparePage() {
                           <td className="px-4 py-3 text-right font-mono">{dimension.weight}</td>
                           <td className="px-4 py-3 text-right font-mono">{dimension.score.toFixed(1)}</td>
                           <td className="px-4 py-3">{dimension.status}</td>
-                          <td className="px-4 py-3 text-secondary">{dimension.reason}</td>
+                          <td className="px-4 py-3 text-secondary">
+                            <div>{dimension.reason}</div>
+                            {formatEvidence(dimension.evidence) ? (
+                              <details className="mt-2 rounded-lg border border-default/50 bg-page/60 p-2">
+                                <summary className="cursor-pointer select-none text-xs font-medium text-primary">
+                                  查看证据
+                                </summary>
+                                <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-all text-[11px] leading-5 text-secondary">
+                                  {formatEvidence(dimension.evidence)}
+                                </pre>
+                              </details>
+                            ) : null}
+                          </td>
                         </tr>
                       ))}
                     </tbody>

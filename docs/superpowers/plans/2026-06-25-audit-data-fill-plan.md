@@ -21,18 +21,43 @@
 
 | 项目 | 当前状态 | 当前证据 |
 |---|---|---|
-| 方法论 schema | 已落地 | `/api/audit/methodology` 已返回 `summary + coverage + runtime + dimensions` |
+| 方法论 schema | 已落地 | `/api/audit/methodology` 已返回 `summary + coverage + runtime + dimensions`；当前运行容器为 `25` 维、`implemented_count=7`、`active_count=7`、`active_weight=56` |
 | compare schema | 已落地 | `/api/audit/compare/:run_id` 已返回 `group/candidate/baseline/dimensions/steps/summary`，且 legacy 失败样本也会补 `run_status/run_status_reason` |
 | 无效样本过滤 | 已落地 | `failed_auth/failed_request/request_error` 不再进入 `latest` 和方法页 coverage |
 | 本地运行态 | 已验证 | `docker compose up -d --build monitor` 可启动，`http://localhost:8080` 可访问 |
-| 当前真实同步数据 | 已有 | `targets.total=149`、`targets.enabled=45`、`channels.channel_count=10` |
-| 当前真实诊断样本 | 仍为空 | `GET /api/audit/diagnostics/latest` 返回空；`methodology.coverage.done_runs=0` |
+| 当前真实同步数据 | 已有 | `targets.total=149`、`targets.enabled=50`、`channels.channel_count=10`、`channels.enabled_count=3`、`log_cursor.last_id=833411` |
+| 当前真实诊断样本 | 仅有失败样本 | `GET /api/audit/diagnostics/latest` 仍无 usable run；`methodology.coverage.done_runs=0`，但 `failed_auth_runs=6` |
 | 空样本原因暴露 | 已落地 | `methodology.runtime.warning` 与 `sync.status.probe_runtime.warning` 已返回 |
 | 详情页空样本提示 | 已落地 | `/p/:provider` 在无有效样本时显示 `sync_fallback` / probe warning，而不是静默显示“暂无” |
-| 失败探针摘要透出 | 已落地 | `GET /api/audit/diagnostics/latest?include_filtered=1` 可返回最近失败 run；当前 3 条真实历史样本已被正确识别为 `failed_auth`，并带 `ping: http 401; identity: http 401` 摘要 |
+| 失败探针摘要透出 | 已落地 | `GET /api/audit/diagnostics/latest?include_filtered=1` 可返回最近失败 run；当前已有 6 条真实失败样本，其中 3 条历史样本摘要为 `ping: http 401; identity: http 401`，3 条 fresh backfill 样本摘要为 `all diagnostic steps returned 401 unauthorized` |
+| 失败统计口径 | 已修正 | 新落库的 terminal failed run（`status=failed_auth`）现在会正确进入 `latest` 与 `methodology.coverage`，不再误记为 `not_done` |
+| 详情页真实状态展示 | 已落地 | `/p/:provider?...` 模型表当前已显示 `new-api` 启停状态、最近一次诊断时间、失败状态中文 badge 和失败原因 |
 | 失败样本详情页 | 已落地 | 失败 run 也可跳到 `/detect/compare/:runId`，页面会展示 step 级 `http 401` 等错误；在 `candidate_only + 无 baseline` 场景下不再误写成“最近一次官方基线对比” |
+| 当前工作区代码状态 | 已推进但未发布到容器 | 本地测试已通过，当前 workspace 已新增 `identity_structured_match`、`service_tier_present`、`anthropic_request_id_passthrough`、`stop_reason_present`，理论方法页计数应提升到 `implemented_count=10`、`active_count=10`、`active_weight=69` |
+| 容器重建状态 | 受外部网络阻塞 | `docker compose up -d --build monitor` 两次失败，错误为 Docker Hub `docker/dockerfile:1.6` token 拉取超时；因此 `localhost:8080` 仍停留在旧容器状态 |
 
 当前运行态的直接结论是：系统已经能同步 `new-api` 渠道和日志，也能正确过滤无效 401/请求失败样本，但由于当前只配置了同步凭证回退模式，尚未拿到可用于 `/v1/chat/completions` 的独立主动探针凭证，所以首批真实 compare 样本还没有落库成功。
+
+## 1.2 本轮新增验证结果（2026-06-25 21:37）
+
+本轮已经把“工作区代码是否真的生效”单独验证完，结果如下：
+
+| 项目 | 当前状态 | 当前证据 |
+|---|---|---|
+| 后端测试 | 已通过 | `go test ./internal/audit ./internal/api ./internal/storage ./internal/config -run 'TestAudit|TestDiagnostic|TestBuildDimensions|TestNewAPI' -v` 全通过 |
+| 前端构建 | 已通过 | `frontend npm run build` 已完成，最新产物已写入 `internal/api/frontend/dist` |
+| 本地新运行态 | 已启动 | 使用 `PORT=18080 MONITOR_SQLITE_PATH=... go run ./cmd/server ./config.yaml` 启动；入口为 `http://localhost:18080` |
+| 新方法页统计 | 已生效 | `http://localhost:18080/api/audit/methodology` 已返回 `implemented_count=10`、`active_count=10`、`active_weight=69` |
+| 本地真实同步数据 | 已生效 | `http://localhost:18080/api/audit/newapi/sync/status` 已返回 `targets.total=149`、`targets.enabled=45`、`channels.channel_count=10`、`channels.enabled_count=2`、`last_id=834012` |
+| 本地失败样本 | 已回填 | 在 `18080` 上执行 backfill 后，`latest?include_filtered=1&limit=10` 当前可见 `6` 条 run，其中 `failed_auth=4`、`done=2` |
+| compare/详情接口 | 已验证 | `diagnostics/:run_id`、`compare/:run_id` 已能读取真实 run；当前失败样本 compare 返回 `summary.overall_score=46.67`、`active_weight=3` |
+| compare 维度 schema | 已收口 | 后端 `compare.dimensions` 已从 `[]any` 收口为明确字段；当前 `diag-8ae0ef20-a735-4df3-a78b-a30f9f0f1a37` 已返回 `dimension_key/weight/score/status/reason/evidence` |
+| compare evidence 展示 | 已落地 | `frontend/src/pages/DetectComparePage.tsx` 已新增 evidence 折叠区；`http://localhost:18080` 已重启为最新静态资源运行态 |
+
+当前直接结论变为两层：
+
+1. `localhost:8080` 仍是旧 docker 容器，方法维度还是旧值。
+2. `localhost:18080` 已经是本地新代码运行态，方法维度和审计样本链路都已经跟上本次实现。
 
 ## 2. 运行时边界与输入
 
@@ -52,16 +77,23 @@
 
 ### 3.1 已有真实数据
 
-来自本地接口 `http://localhost:8080`：
+来自两个不同运行态的本地接口：
+
+| 运行态 | 说明 |
+|---|---|
+| `http://localhost:8080` | 旧 docker 容器，因外部镜像拉取失败，仍停留在旧代码 |
+| `http://localhost:18080` | 本地 `go run` 新进程，已带上本轮后端和前端最新改动 |
+
+以下“已确认数据”优先以 `http://localhost:18080` 为准：
 
 | 接口 | 当前状态 | 已确认数据 |
 |---|---|---|
-| `/api/audit/newapi/sync/status` | 有真实值 | `targets.total=149`、`targets.enabled=50`、`channels.channel_count=10`、`channels.enabled_count=3`、`log_cursor.last_id=833394`、`probe_runtime.probe_credential_mode=sync_fallback` |
+| `/api/audit/newapi/sync/status` | 有真实值 | `targets.total=149`、`targets.enabled=45`、`channels.channel_count=10`、`channels.enabled_count=2`、`log_cursor.last_id=834012`、`probe_runtime.probe_credential_mode=sync_fallback` |
 | `/api/audit/targets` | 有真实值 | 已生成 `provider + service + channel + model + request_model + enabled` 审计对象 |
 | `/api/audit/ranking?window=24h` | 有真实值 | 已有生产日志聚合结果：`total/success/error/timeout/success_rate/p95/p99/tokens_per_second/avg_frt/score` |
 | `/api/audit/channels` | 有真实值 | 已能显示 `new-api` 同步过来的渠道快照和启停状态 |
-| `/api/audit/diagnostics/latest?include_filtered=1` | 有真实值 | 当前已有 3 条真实失败样本，均为 `failed_auth`，并带 `ping: http 401; identity: http 401` 摘要 |
-| `/api/audit/compare/:run_id` | 有真实值 | 失败样本也可查看 step 级 `http 401`、过渡性维度分和 `candidate_only`/无 baseline 状态 |
+| `/api/audit/diagnostics/latest?include_filtered=1` | 有真实值 | 当前本地新运行态已有 6 条真实 run，其中 `failed_auth=4`、`done=2`；最近失败样本可看到 `failed_auth` 过滤原因与摘要 |
+| `/api/audit/compare/:run_id` | 有真实值 | 失败样本也可查看 step 级 `http 401`、过渡性维度分和 `candidate_only`/无 baseline 状态；例如 `diag-8ae0ef20-a735-4df3-a78b-a30f9f0f1a37` 已返回 `overall_score=46.67`，且首条维度已包含 `evidence.step_count/tags` |
 
 这部分说明当前系统已经具备：
 

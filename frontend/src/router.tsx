@@ -74,6 +74,10 @@ function RouterFallback() {
  *
  * 每个语言布局下的子路由相同，提取为函数避免重复。
  * 路由结构：
+ * - /                 → App（基于 new-api 渠道数据的入口页）
+ * - /status           → App（旧路径别名）
+ * - /p/:provider      → ProviderPage（服务商详情页）
+ * - /detect           → DetectPage（检测方法页，保留旧路径）
  * - /contact          → ContactPage（联系我们落地页）
  * - /contact/apply    → OnboardingPage（申请收录）
  * - /contact/change   → ChangeRequestPage（申请变更）
@@ -84,6 +88,7 @@ function renderChildRoutes(langPrefix?: string) {
   return (
     <>
       <Route index element={<App />} />
+      <Route path="status" element={<App />} />
       <Route path="p/:provider" element={<ProviderPage />} />
       <Route path="detect" element={<DetectPage />} />
       <Route path="detect/compare/:runId" element={<DetectComparePage />} />

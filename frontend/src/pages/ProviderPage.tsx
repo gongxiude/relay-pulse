@@ -47,6 +47,7 @@ interface ModelDetailRow {
   latestMethodologyVersion?: string | null;
   latestAttemptStatus?: string | null;
   latestAttemptReason?: string | null;
+  latestAttemptCreatedAt?: number | null;
 }
 
 const SERVICE_TAB_LABELS: Record<ServiceTab, string> = {
@@ -339,6 +340,7 @@ export default function ProviderPage() {
             ? (latestAttempt?.run.run_status ?? latestAttempt?.run.status ?? null)
             : (latestAttempt?.filter_reason ?? latestAttempt?.run.run_status ?? latestAttempt?.run.status ?? null),
           latestAttemptReason: latestAttempt?.run.run_status_reason ?? latestAttempt?.filter_reason ?? null,
+          latestAttemptCreatedAt: latestAttempt?.run.created_at ?? null,
         } satisfies ModelDetailRow;
       })
       .sort((a, b) => {
@@ -364,9 +366,9 @@ export default function ProviderPage() {
 
   const showProbeWarning = useMemo(() => {
     if (!currentSnapshot || latestDiagnosticsLoading) return false;
-    if (latestDiagnostics.length > 0) return false;
+    if (latestDiagnostics.some((item) => item.usable)) return false;
     return Boolean(syncStatus?.probe_runtime?.warning);
-  }, [currentSnapshot, latestDiagnostics.length, latestDiagnosticsLoading, syncStatus]);
+  }, [currentSnapshot, latestDiagnostics, latestDiagnosticsLoading, syncStatus]);
 
   const pageTitle = providerDisplayName ? `${providerDisplayName} - 服务商质量排名` : '服务商质量排名';
 
@@ -534,13 +536,14 @@ export default function ProviderPage() {
             ) : !currentSnapshot ? (
               <div className="px-6 py-16 text-center text-muted">当前筛选下没有可展示的通道。</div>
             ) : (
-              <table className="w-full min-w-[1180px] text-left">
+              <table className="w-full min-w-[1280px] text-left">
                 <thead>
                   <tr className="border-b border-default/60 text-[13px] text-secondary">
                     <th className="px-4 py-4 font-medium">#</th>
                     <th className="px-4 py-4 font-medium">服务商</th>
                     <th className="px-4 py-4 font-medium">通道</th>
                     <th className="px-4 py-4 font-medium">模型</th>
+                    <th className="px-4 py-4 font-medium">当前状态</th>
                     <th className="px-4 py-4 font-medium">最终质量分</th>
                     <th className="px-4 py-4 font-medium">机器指纹分</th>
                     <th className="px-4 py-4 font-medium">趋势</th>
@@ -568,6 +571,9 @@ export default function ProviderPage() {
                       </td>
                       <td className="px-4 py-4 font-mono text-primary">{row.modelName}</td>
                       <td className="px-4 py-4">
+                        <CurrentStatusBadge enabled={row.enabled} />
+                      </td>
+                      <td className="px-4 py-4">
                         <ScoreBadge score={row.finalScore} enabled={row.enabled} />
                       </td>
                       <td className="px-4 py-4">
@@ -594,30 +600,37 @@ export default function ProviderPage() {
                         </div>
                       </td>
                       <td className="px-4 py-4">
-                        {row.compareUrl ? (
-                          <a
-                            href={row.compareUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center rounded-md bg-blue-500/15 px-2 py-1 text-xs font-semibold text-blue-300 hover:bg-blue-500/20"
-                          >
-                            {row.latestAttemptStatus && row.latestAttemptStatus !== 'done'
-                              ? '失败详情'
-                              : (row.latestMethodologyVersion || '查看结果')}
-                          </a>
-                        ) : (
-                          <div className="space-y-1">
+                        <div className="space-y-1">
+                          {row.compareUrl ? (
+                            <a
+                              href={row.compareUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center rounded-md bg-blue-500/15 px-2 py-1 text-xs font-semibold text-blue-300 hover:bg-blue-500/20"
+                            >
+                              {row.latestAttemptStatus && row.latestAttemptStatus !== 'done'
+                                ? '失败详情'
+                                : (row.latestMethodologyVersion || '查看结果')}
+                            </a>
+                          ) : (
                             <span className="text-muted text-sm">
                               {showProbeWarning ? '等待有效样本' : '暂无'}
                             </span>
-                            {row.latestAttemptStatus && row.latestAttemptStatus !== 'done' ? (
-                              <div className="text-xs text-amber-300">
-                                {row.latestAttemptStatus}
-                                {row.latestAttemptReason ? ` · ${row.latestAttemptReason}` : ''}
-                              </div>
-                            ) : null}
-                          </div>
-                        )}
+                          )}
+                          {row.latestAttemptStatus ? (
+                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                              <LatestAttemptStatusBadge status={row.latestAttemptStatus} />
+                              {row.latestAttemptCreatedAt ? (
+                                <span className="text-muted">{formatDateTime(row.latestAttemptCreatedAt)}</span>
+                              ) : null}
+                            </div>
+                          ) : null}
+                          {row.latestAttemptReason ? (
+                            <div className="max-w-[18rem] text-xs leading-relaxed text-amber-300">
+                              {row.latestAttemptReason}
+                            </div>
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -713,6 +726,43 @@ function ScoreBadge({
       {Math.round(score)}
     </span>
   );
+}
+
+function CurrentStatusBadge({ enabled }: { enabled: boolean }) {
+  if (enabled) {
+    return <span className="inline-flex rounded-full bg-emerald-500/15 px-3 py-1 text-sm font-semibold text-emerald-300">启用</span>;
+  }
+  return <span className="inline-flex rounded-full bg-slate-500/15 px-3 py-1 text-sm font-semibold text-slate-300">停用</span>;
+}
+
+function LatestAttemptStatusBadge({ status }: { status: string }) {
+  const normalized = status.trim().toLowerCase();
+  let label = status || '未知';
+  let className = 'bg-slate-500/15 text-slate-300';
+
+  switch (normalized) {
+    case 'failed_auth':
+      label = '认证失败';
+      className = 'bg-rose-500/15 text-rose-300';
+      break;
+    case 'failed_request':
+      label = '请求失败';
+      className = 'bg-amber-500/15 text-amber-300';
+      break;
+    case 'usable':
+    case 'done':
+      label = '已完成';
+      className = 'bg-emerald-500/15 text-emerald-300';
+      break;
+    case 'not_done':
+      label = '进行中';
+      className = 'bg-sky-500/15 text-sky-300';
+      break;
+    default:
+      break;
+  }
+
+  return <span className={`inline-flex rounded-md px-2 py-0.5 font-semibold ${className}`}>{label}</span>;
 }
 
 function AvailabilityBadge({ value, enabled }: { value: number | null; enabled: boolean }) {
@@ -825,6 +875,17 @@ function formatLatency(value: number | null): string {
 
 function formatLatencyCompact(value: number): string {
   return `${(value / 1000).toFixed(1)}s`;
+}
+
+function formatDateTime(unixSeconds: number): string {
+  if (!unixSeconds || unixSeconds <= 0) return '--';
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date(unixSeconds * 1000));
 }
 
 function inferSourceKey(snapshot: AuditChannelSnapshot): SourceKey {

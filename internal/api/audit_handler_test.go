@@ -242,6 +242,20 @@ func TestAuditDiagnosticAndCompare(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveDiagnosticRun bad: %v", err)
 	}
+	if err := store.SaveDiagnosticRun(&storage.DiagnosticRun{
+		RunID:     "run-bad-terminal",
+		Provider:  "OpenAI",
+		Service:   "cc",
+		Channel:   "101:demo",
+		Model:     "gpt-4o",
+		Status:    "failed_auth",
+		CreatedAt: 1710000001,
+		UpdatedAt: 1710000002,
+		Input:     []byte(`{"group_id":"group-bad-terminal","request_model":"gpt-4o"}`),
+		Output:    []byte(`{"run_status":"failed_auth","run_status_reason":"all diagnostic steps returned 401 unauthorized","tags":["request_error"]}`),
+	}); err != nil {
+		t.Fatalf("SaveDiagnosticRun bad terminal: %v", err)
+	}
 	if err := store.SaveDiagnosticStep(&storage.DiagnosticStep{
 		RunID:           run.RunID,
 		StepIndex:       1,
@@ -285,6 +299,16 @@ func TestAuditDiagnosticAndCompare(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveDiagnosticScore bad: %v", err)
 	}
+	if err := store.SaveDiagnosticScore(&storage.DiagnosticScore{
+		RunID:             "run-bad-terminal",
+		AuthenticityScore: 0,
+		ProtocolScore:     40,
+		SSEScore:          100,
+		Tags:              []byte(`["request_error"]`),
+		CreatedAt:         1710000004,
+	}); err != nil {
+		t.Fatalf("SaveDiagnosticScore bad terminal: %v", err)
+	}
 	if err := store.SaveDiagnosticRunGroup(&storage.DiagnosticRunGroup{
 		GroupID:            "group-1",
 		CandidateRunID:     run.RunID,
@@ -304,6 +328,7 @@ func TestAuditDiagnosticAndCompare(t *testing.T) {
 		NormalizedScore: 95,
 		Status:          "pass",
 		Reason:          "legacy summary score",
+		Evidence:        []byte(`{"candidate_text":"pong","baseline_text":"official-pong"}`),
 		CreatedAt:       1710000005,
 	}); err != nil {
 		t.Fatalf("SaveDiagnosticDimension: %v", err)
@@ -358,6 +383,9 @@ func TestAuditDiagnosticAndCompare(t *testing.T) {
 	}
 	if len(compareResp.Data.Dimensions) != 1 {
 		t.Fatalf("unexpected compare dimensions: %+v", compareResp.Data.Dimensions)
+	}
+	if compareResp.Data.Dimensions[0].DimensionKey != "authenticity_summary" || compareResp.Data.Dimensions[0].Evidence == nil {
+		t.Fatalf("unexpected compare dimension payload: %+v", compareResp.Data.Dimensions[0])
 	}
 	if compareResp.Data.Summary.OverallScore <= 0 || compareResp.Data.Steps[0].Candidate.StepName != "ping" || compareResp.Data.Steps[0].Baseline == nil {
 		t.Fatalf("unexpected compare summary/steps: %+v", compareResp.Data)
@@ -416,20 +444,29 @@ func TestAuditDiagnosticAndCompare(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &latestWithFilteredResp); err != nil {
 		t.Fatalf("unmarshal latest include_filtered response: %v", err)
 	}
-	if !latestWithFilteredResp.Success || len(latestWithFilteredResp.Data.Items) != 2 {
+	if !latestWithFilteredResp.Success || len(latestWithFilteredResp.Data.Items) != 3 {
 		t.Fatalf("unexpected latest include_filtered payload: %+v", latestWithFilteredResp)
 	}
-	if latestWithFilteredResp.Data.Items[0].Run.RunID != "run-bad" ||
+	if latestWithFilteredResp.Data.Items[0].Run.RunID != "run-bad-terminal" ||
 		latestWithFilteredResp.Data.Items[0].Usable ||
 		latestWithFilteredResp.Data.Items[0].FilterReason != "failed_auth" ||
 		latestWithFilteredResp.Data.Items[0].Run.RunStatus != "failed_auth" {
 		t.Fatalf("unexpected latest filtered first item: %+v", latestWithFilteredResp.Data.Items[0])
 	}
 	if latestWithFilteredResp.Data.Items[0].Run.RunStatusReason == "" {
-		t.Fatalf("expected latest filtered item to include run status reason: %+v", latestWithFilteredResp.Data.Items[0])
+		t.Fatalf("expected latest filtered first item to include run status reason: %+v", latestWithFilteredResp.Data.Items[0])
 	}
-	if latestWithFilteredResp.Data.Items[1].Run.RunID != "run-1" || !latestWithFilteredResp.Data.Items[1].Usable {
+	if latestWithFilteredResp.Data.Items[1].Run.RunID != "run-bad" ||
+		latestWithFilteredResp.Data.Items[1].Usable ||
+		latestWithFilteredResp.Data.Items[1].FilterReason != "failed_auth" ||
+		latestWithFilteredResp.Data.Items[1].Run.RunStatus != "failed_auth" {
 		t.Fatalf("unexpected latest filtered second item: %+v", latestWithFilteredResp.Data.Items[1])
+	}
+	if latestWithFilteredResp.Data.Items[1].Run.RunStatusReason == "" {
+		t.Fatalf("expected latest filtered second item to include run status reason: %+v", latestWithFilteredResp.Data.Items[1])
+	}
+	if latestWithFilteredResp.Data.Items[2].Run.RunID != "run-1" || !latestWithFilteredResp.Data.Items[2].Usable {
+		t.Fatalf("unexpected latest filtered third item: %+v", latestWithFilteredResp.Data.Items[2])
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/audit/methodology", nil)
@@ -451,9 +488,9 @@ func TestAuditDiagnosticAndCompare(t *testing.T) {
 	if methodologyResp.Data.Coverage.DoneRuns != 2 ||
 		methodologyResp.Data.Coverage.DimensionRuns != 1 ||
 		methodologyResp.Data.Coverage.DimensionRowCount != 1 ||
-		methodologyResp.Data.Coverage.FailedAuthRuns != 1 ||
+		methodologyResp.Data.Coverage.FailedAuthRuns != 2 ||
 		methodologyResp.Data.Coverage.FailedRequestRuns != 0 ||
-		methodologyResp.Data.Coverage.FilteredRuns != 1 {
+		methodologyResp.Data.Coverage.FilteredRuns != 2 {
 		t.Fatalf("unexpected methodology coverage: %+v", methodologyResp.Data.Coverage)
 	}
 	if methodologyResp.Data.Runtime.ProbeCredentialMode != "missing" || methodologyResp.Data.Runtime.ProbeReady {
