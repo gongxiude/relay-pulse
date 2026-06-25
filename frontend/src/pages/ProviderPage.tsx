@@ -28,9 +28,6 @@ type SourceKey = 'all' | 'recommended' | 'official' | 'reverse' | 'mixed' | 'unk
 
 interface ModelDetailRow {
   id: string;
-  rankScore: number;
-  providerName: string;
-  channelLabel: string;
   modelName: string;
   finalScore: number | null;
   fingerprintScore: number | null;
@@ -41,7 +38,6 @@ interface ModelDetailRow {
   p95LatencyMs: number | null;
   ttftMs: number | null;
   enabled: boolean;
-  sourceKey: SourceKey;
   latestRunId?: string | null;
   compareUrl?: string | null;
   latestMethodologyVersion?: string | null;
@@ -54,13 +50,6 @@ const SERVICE_TAB_LABELS: Record<ServiceTab, string> = {
   cc: 'Claude Code',
   cx: 'Codex',
 };
-
-const SCORE_BANDS = [
-  { label: '≥85', desc: '与官方近 3 次基线高度接近', color: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' },
-  { label: '70-84', desc: '多数维度接近基线', color: 'bg-lime-500/15 text-lime-300 border-lime-500/30' },
-  { label: '50-69', desc: '与基线存在可见偏离', color: 'bg-amber-500/15 text-amber-300 border-amber-500/30' },
-  { label: '<50', desc: '与基线偏离较明显', color: 'bg-rose-500/15 text-rose-300 border-rose-500/30' },
-];
 
 const SOURCE_META: Record<Exclude<SourceKey, 'all'>, { label: string; icon: React.ReactNode }> = {
   recommended: { label: '董推', icon: <Sparkles size={14} className="text-cyan-300" /> },
@@ -235,6 +224,16 @@ export default function ProviderPage() {
     return value === 'all' || modelOptions.includes(value) ? value : 'all';
   }, [searchParams, modelOptions]);
 
+  const currentSourceKey = useMemo<SourceKey>(() => {
+    if (!currentSnapshot) return 'unknown';
+    return inferSourceKey(currentSnapshot);
+  }, [currentSnapshot]);
+
+  const currentSourceMeta = useMemo(() => {
+    if (currentSourceKey === 'all') return null;
+    return SOURCE_META[currentSourceKey as Exclude<SourceKey, 'all'>];
+  }, [currentSourceKey]);
+
   useEffect(() => {
     if (!providerExists) return;
     const next = new URLSearchParams(searchParams);
@@ -319,9 +318,6 @@ export default function ProviderPage() {
           : null;
         return {
           id: `${currentSnapshot.newapi_channel_id}-${modelName}`,
-          rankScore: latestScore ?? rpModel?.score ?? -1,
-          providerName: currentSnapshot.provider,
-          channelLabel: extractAuditChannelName(currentSnapshot.channel),
           modelName,
           finalScore: latestScore ?? rpModel?.score ?? null,
           fingerprintScore: latestScore ?? rpModel?.score ?? currentRpdiag?.max_score ?? null,
@@ -332,7 +328,6 @@ export default function ProviderPage() {
           p95LatencyMs: computeP95Latency(matchedMonitor?.history),
           ttftMs: null,
           enabled: currentSnapshot.enabled,
-          sourceKey: inferSourceKey(currentSnapshot),
           latestRunId: latestAttemptRunId,
           compareUrl: localCompareUrl,
           latestMethodologyVersion: latestDiagnostic?.score?.methodology_version ?? latestDiagnostic?.run.methodology_version ?? null,
@@ -343,10 +338,6 @@ export default function ProviderPage() {
           latestAttemptCreatedAt: latestAttempt?.run.created_at ?? null,
         } satisfies ModelDetailRow;
       })
-      .sort((a, b) => {
-        if (b.rankScore !== a.rankScore) return b.rankScore - a.rankScore;
-        return a.modelName.localeCompare(b.modelName);
-      });
 
     return filtered.map((row, index) => ({
       ...row,
@@ -370,7 +361,25 @@ export default function ProviderPage() {
     return Boolean(syncStatus?.probe_runtime?.warning);
   }, [currentSnapshot, latestDiagnostics, latestDiagnosticsLoading, syncStatus]);
 
-  const pageTitle = providerDisplayName ? `${providerDisplayName} - 服务商质量排名` : '服务商质量排名';
+  const diagnosticSummary = useMemo(() => {
+    let usable = 0;
+    let failedAuth = 0;
+    let failedRequest = 0;
+    let pending = 0;
+    latestDiagnostics.forEach((item) => {
+      if (item.usable) {
+        usable += 1;
+        return;
+      }
+      const status = (item.filter_reason || item.run.run_status || item.run.status || '').toLowerCase();
+      if (status === 'failed_auth') failedAuth += 1;
+      else if (status === 'failed_request') failedRequest += 1;
+      else pending += 1;
+    });
+    return { usable, failedAuth, failedRequest, pending };
+  }, [latestDiagnostics]);
+
+  const pageTitle = providerDisplayName ? `${providerDisplayName} - 服务商详情` : '服务商详情';
 
   if (!auditLoading && !providerExists && !auditError) {
     return (
@@ -411,13 +420,19 @@ export default function ProviderPage() {
           <Header stats={headerStats} />
 
           <section className="mb-6">
-            <h1 className="text-3xl font-bold tracking-tight text-primary">服务商质量排名</h1>
-            <p className="mt-3 text-secondary text-base leading-relaxed">
-              基于协议指纹与官方近 3 次基线的加权相似度评分（0-100），分数越高代表与官方行为越接近。
-            </p>
-            <div className="mt-4 rounded-xl border border-default/70 bg-surface/70 px-4 py-3 text-sm text-muted">
-              仅供参考的统计观察；权重见方法论，不构成定性结论。
+            <div className="flex flex-wrap items-center gap-3">
+              <h1 className="text-3xl font-bold tracking-tight text-primary">{providerDisplayName || '服务商详情'}</h1>
+              {currentSourceMeta ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-default/70 bg-surface/70 px-3 py-1 text-sm text-secondary">
+                  {currentSourceMeta.icon}
+                  {currentSnapshot?.channelTypeLabel || currentSourceMeta.label}
+                </span>
+              ) : null}
+              {currentSnapshot ? <SnapshotStatusBadge snapshot={currentSnapshot} /> : null}
             </div>
+            <p className="mt-3 text-secondary text-base leading-relaxed">
+              当前页按 `new-api` 同步过来的真实通道展开，展示该服务商在选定渠道下的模型状态、最近检测状态与可用率补充信息。
+            </p>
           </section>
 
           <section className="mb-4">
@@ -449,7 +464,30 @@ export default function ProviderPage() {
             </div>
           </section>
 
-          <section className="mb-4 grid gap-4 md:grid-cols-4">
+          <section className="mb-5 grid gap-4 lg:grid-cols-4 md:grid-cols-2">
+            <SummaryCard
+              label="当前通道"
+              value={currentSnapshot ? extractAuditChannelName(currentSnapshot.channel) : '--'}
+              hint={currentSnapshot?.channel || '未选定通道'}
+            />
+            <SummaryCard
+              label="服务类型"
+              value={SERVICE_TAB_LABELS[selectedService]}
+              hint={currentSnapshot?.service || '以同步快照为准'}
+            />
+            <SummaryCard
+              label="模型数量"
+              value={String(modelRows.length)}
+              hint={selectedModel === 'all' ? '当前通道全部模型' : selectedModel}
+            />
+            <SummaryCard
+              label="最近样本"
+              value={String(diagnosticSummary.usable)}
+              hint={`401失败 ${diagnosticSummary.failedAuth} / 请求失败 ${diagnosticSummary.failedRequest}`}
+            />
+          </section>
+
+          <section className="mb-4 grid gap-4 md:grid-cols-3">
             <FilterField
               label="来源"
               value={selectedSource}
@@ -458,13 +496,6 @@ export default function ProviderPage() {
                 value: option,
                 label: option === 'all' ? '全部来源' : SOURCE_META[option as Exclude<SourceKey, 'all'>].label,
               }))}
-            />
-            <FilterField
-              label="服务商"
-              value={providerDisplayName}
-              disabled
-              options={[{ value: providerDisplayName, label: providerDisplayName }]}
-              onChange={() => {}}
             />
             <FilterField
               label="通道"
@@ -478,38 +509,6 @@ export default function ProviderPage() {
               onChange={(value) => updateParam(setSearchParams, searchParams, { model: value === 'all' ? undefined : value })}
               options={[{ value: 'all', label: '全部模型' }, ...modelOptions.map((model) => ({ value: model, label: model }))]}
             />
-          </section>
-
-          <section className="mb-3 rounded-xl border border-default/70 bg-surface/70 px-4 py-3 text-sm">
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-secondary">
-              <span className="text-muted">通道符号:</span>
-              <LegendChip icon={<Sparkles size={14} className="text-cyan-300" />} label="董推" />
-              <LegendChip icon={<Flame size={14} className="text-orange-300" />} label="rpdiag 直连基准" />
-              <LegendChip icon={<ChannelTypeIcon channel="O-demo" />} label="服务商自报官方通道 (O-)" />
-              <LegendChip icon={<ChannelTypeIcon channel="R-demo" />} label="逆向 (R-)" />
-              <LegendChip icon={<ChannelTypeIcon channel="M-demo" />} label="混合 (M-)" />
-              <LegendChip icon={<ChannelTypeIcon channel="X-demo" />} label="未知" />
-              <LegendChip icon={<CircleHelp size={14} className="text-slate-300" />} label="用户提交 (U-)" />
-              {!currentSnapshot?.enabled && <span className="inline-flex items-center gap-1 rounded-md bg-slate-500/15 px-2 py-0.5 text-slate-300">不可测</span>}
-              <span className="text-muted">最近一次未取回可评分响应（排名按 0 计）</span>
-            </div>
-          </section>
-
-          <section className="mb-6 rounded-xl border border-default/70 bg-surface/70 px-4 py-3 text-sm">
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="text-muted">分数含义:</span>
-              {SCORE_BANDS.map((band) => (
-                <div key={band.label} className="flex items-center gap-2">
-                  <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 font-semibold ${band.color}`}>
-                    {band.label}
-                  </span>
-                  <span className="text-secondary">{band.desc}</span>
-                </div>
-              ))}
-            </div>
-            <p className="mt-2 text-muted">
-              分数为多维加权相似度（含可用率 / 延迟等展示层调整），非通道争纷或质量定性结论。
-            </p>
           </section>
 
           {showProbeWarning && (
@@ -526,6 +525,18 @@ export default function ProviderPage() {
             </section>
           )}
 
+          <section className="mb-4 rounded-xl border border-default/70 bg-surface/60 px-4 py-3 text-sm text-secondary">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <LegendChip icon={<Sparkles size={14} className="text-cyan-300" />} label="董推" />
+              <LegendChip icon={<Flame size={14} className="text-orange-300" />} label="rpdiag 直连基准" />
+              <LegendChip icon={<ChannelTypeIcon channel="O-demo" />} label="官方直连" />
+              <LegendChip icon={<ChannelTypeIcon channel="M-demo" />} label="混合" />
+              <LegendChip icon={<ChannelTypeIcon channel="R-demo" />} label="逆向" />
+              <LegendChip icon={<ChannelTypeIcon channel="X-demo" />} label="未知" />
+              <LegendChip icon={<CircleHelp size={14} className="text-slate-300" />} label="用户提交" />
+            </div>
+          </section>
+
           <main className="overflow-x-auto rounded-2xl border border-default/70 bg-surface/55 shadow-xl backdrop-blur-sm">
             {(auditLoading || monitorLoading || latestDiagnosticsLoading) && modelRows.length === 0 ? (
               <div className="px-6 py-16 text-center text-muted">正在加载模型级详情…</div>
@@ -539,84 +550,36 @@ export default function ProviderPage() {
               <table className="w-full min-w-[1280px] text-left">
                 <thead>
                   <tr className="border-b border-default/60 text-[13px] text-secondary">
-                    <th className="px-4 py-4 font-medium">#</th>
-                    <th className="px-4 py-4 font-medium">服务商</th>
-                    <th className="px-4 py-4 font-medium">通道</th>
                     <th className="px-4 py-4 font-medium">模型</th>
                     <th className="px-4 py-4 font-medium">当前状态</th>
+                    <th className="px-4 py-4 font-medium">最近检测状态</th>
                     <th className="px-4 py-4 font-medium">最终质量分</th>
-                    <th className="px-4 py-4 font-medium">机器指纹分</th>
+                    <th className="px-4 py-4 font-medium">可用率 30D</th>
+                    <th className="px-4 py-4 font-medium">平均延迟 30D</th>
                     <th className="px-4 py-4 font-medium">趋势</th>
                     <th className="px-4 py-4 font-medium">测试数</th>
-                    <th className="px-4 py-4 font-medium">可用率 30D</th>
-                    <th className="px-4 py-4 font-medium">首 TOKEN 30D</th>
-                    <th className="px-4 py-4 font-medium">平均延迟 30D</th>
-                    <th className="px-4 py-4 font-medium">最近检测</th>
+                    <th className="px-4 py-4 font-medium">结果详情</th>
                   </tr>
                 </thead>
                 <tbody>
                   {modelRows.map((row, index) => (
                     <tr key={row.id} className={`border-b border-default/40 ${index === 0 ? 'bg-white/[0.03]' : 'hover:bg-elevated/35'} transition-colors`}>
-                      <td className="px-4 py-4 font-mono text-secondary">{index + 1}</td>
                       <td className="px-4 py-4">
-                        <div className="font-semibold text-primary">{row.providerName}</div>
-                      </td>
-                      <td className="px-4 py-4">
-                        <div className="flex items-center gap-2 text-secondary">
-                          {row.sourceKey === 'all'
-                            ? <ChannelTypeIcon channel={currentSnapshot.channel} />
-                            : SOURCE_META[row.sourceKey].icon}
-                          <span className="font-medium text-blue-300">{row.channelLabel}</span>
+                        <div className="space-y-1">
+                          <div className="font-mono text-primary">{row.modelName}</div>
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-secondary">
+                            {currentSourceMeta?.icon}
+                            <span>{currentSnapshot?.channelTypeLabel || currentSourceMeta?.label || '未知'}</span>
+                            <span className="text-muted">/</span>
+                            <span>{currentSnapshot ? extractAuditChannelName(currentSnapshot.channel) : '--'}</span>
+                          </div>
                         </div>
                       </td>
-                      <td className="px-4 py-4 font-mono text-primary">{row.modelName}</td>
                       <td className="px-4 py-4">
-                        <CurrentStatusBadge enabled={row.enabled} />
-                      </td>
-                      <td className="px-4 py-4">
-                        <ScoreBadge score={row.finalScore} enabled={row.enabled} />
-                      </td>
-                      <td className="px-4 py-4">
-                        <ScoreBadge score={row.fingerprintScore} enabled={true} subtle />
-                      </td>
-                      <td className="px-4 py-4">
-                        <TrendSparkline trend={row.trend} enabled={row.enabled} />
-                      </td>
-                      <td className="px-4 py-4 font-medium text-primary">{row.testsCount ?? '--'}</td>
-                      <td className="px-4 py-4">
-                        <AvailabilityBadge value={row.uptime} enabled={row.enabled} />
-                      </td>
-                      <td className="px-4 py-4 font-medium text-primary">
-                        {formatLatency(row.ttftMs)}
-                      </td>
-                      <td className="px-4 py-4">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-primary">{formatLatency(row.avgLatencyMs)}</span>
-                          {row.p95LatencyMs != null && (
-                            <span className="inline-flex items-center rounded-md bg-orange-500/15 px-2 py-0.5 text-xs font-semibold text-orange-300">
-                              p95 {formatLatencyCompact(row.p95LatencyMs)}
-                            </span>
-                          )}
-                        </div>
+                        {currentSnapshot ? <SnapshotStatusBadge snapshot={currentSnapshot} /> : <CurrentStatusBadge enabled={row.enabled} />}
                       </td>
                       <td className="px-4 py-4">
                         <div className="space-y-1">
-                          {row.compareUrl ? (
-                            <a
-                              href={row.compareUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center rounded-md bg-blue-500/15 px-2 py-1 text-xs font-semibold text-blue-300 hover:bg-blue-500/20"
-                            >
-                              {row.latestAttemptStatus && row.latestAttemptStatus !== 'done'
-                                ? '失败详情'
-                                : (row.latestMethodologyVersion || '查看结果')}
-                            </a>
-                          ) : (
-                            <span className="text-muted text-sm">
-                              {showProbeWarning ? '等待有效样本' : '暂无'}
-                            </span>
-                          )}
                           {row.latestAttemptStatus ? (
                             <div className="flex flex-wrap items-center gap-2 text-xs">
                               <LatestAttemptStatusBadge status={row.latestAttemptStatus} />
@@ -624,13 +587,58 @@ export default function ProviderPage() {
                                 <span className="text-muted">{formatDateTime(row.latestAttemptCreatedAt)}</span>
                               ) : null}
                             </div>
-                          ) : null}
+                          ) : (
+                            <span className="text-muted text-sm">{showProbeWarning ? '等待有效样本' : '暂无检测记录'}</span>
+                          )}
                           {row.latestAttemptReason ? (
                             <div className="max-w-[18rem] text-xs leading-relaxed text-amber-300">
                               {row.latestAttemptReason}
                             </div>
                           ) : null}
                         </div>
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <ScoreBadge score={row.finalScore} enabled={row.enabled} />
+                          {row.fingerprintScore != null ? (
+                            <span className="text-xs text-muted">指纹 {Math.round(row.fingerprintScore)}</span>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td className="px-4 py-4">
+                        <AvailabilityBadge value={row.uptime} enabled={row.enabled} />
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-primary">{formatLatency(row.avgLatencyMs)}</span>
+                          {row.p95LatencyMs != null ? (
+                            <span className="inline-flex items-center rounded-md bg-orange-500/15 px-2 py-0.5 text-xs font-semibold text-orange-300">
+                              p95 {formatLatencyCompact(row.p95LatencyMs)}
+                            </span>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td className="px-4 py-4">
+                        <TrendSparkline trend={row.trend} enabled={row.enabled} />
+                      </td>
+                      <td className="px-4 py-4 font-medium text-primary">{row.testsCount ?? '--'}</td>
+                      <td className="px-4 py-4">
+                        {row.compareUrl ? (
+                          <a
+                            href={row.compareUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center rounded-md bg-blue-500/15 px-2 py-1 text-xs font-semibold text-blue-300 hover:bg-blue-500/20"
+                          >
+                            {row.latestAttemptStatus && row.latestAttemptStatus !== 'done'
+                              ? '失败详情'
+                              : (row.latestMethodologyVersion || '查看结果')}
+                          </a>
+                        ) : (
+                          <span className="text-muted text-sm">
+                            {showProbeWarning ? '等待有效样本' : '暂无'}
+                          </span>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -695,6 +703,16 @@ function LegendChip({ icon, label }: { icon: React.ReactNode; label: string }) {
       {icon}
       <span>{label}</span>
     </span>
+  );
+}
+
+function SummaryCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="rounded-xl border border-default/70 bg-surface/70 px-4 py-4">
+      <div className="text-sm text-secondary">{label}</div>
+      <div className="mt-2 text-xl font-semibold text-primary break-all">{value}</div>
+      {hint ? <div className="mt-1 text-xs leading-relaxed text-muted">{hint}</div> : null}
+    </div>
   );
 }
 
@@ -763,6 +781,21 @@ function LatestAttemptStatusBadge({ status }: { status: string }) {
   }
 
   return <span className={`inline-flex rounded-md px-2 py-0.5 font-semibold ${className}`}>{label}</span>;
+}
+
+function SnapshotStatusBadge({ snapshot }: { snapshot: AuditChannelSnapshot }) {
+  const rawStatus = typeof snapshot.raw?.Status === 'number' ? snapshot.raw.Status : null;
+  if (snapshot.enabled) {
+    return <span className="inline-flex rounded-full bg-emerald-500/15 px-3 py-1 text-sm font-semibold text-emerald-300">已启用</span>;
+  }
+  if (rawStatus != null) {
+    return (
+      <span className="inline-flex rounded-full bg-slate-500/15 px-3 py-1 text-sm font-semibold text-slate-300">
+        {`已禁用(S${rawStatus})`}
+      </span>
+    );
+  }
+  return <span className="inline-flex rounded-full bg-slate-500/15 px-3 py-1 text-sm font-semibold text-slate-300">已停用</span>;
 }
 
 function AvailabilityBadge({ value, enabled }: { value: number | null; enabled: boolean }) {

@@ -5,11 +5,8 @@ import { useSyncLanguage } from './hooks/useSyncLanguage';
 // 路由级代码分割：懒加载页面组件
 const App = lazy(() => import('./App'));
 const ProviderPage = lazy(() => import('./pages/ProviderPage'));
-const OnboardingPage = lazy(() => import('./pages/OnboardingPage'));
-const ContactPage = lazy(() => import('./pages/ContactPage'));
 const DetectPage = lazy(() => import('./pages/DetectPage'));
 const DetectComparePage = lazy(() => import('./pages/DetectComparePage'));
-const ChangeRequestPage = lazy(() => import('./pages/ChangeRequestPage'));
 const AdminPage = lazy(() => import('./pages/AdminPage'));
 
 /**
@@ -78,13 +75,8 @@ function RouterFallback() {
  * - /status           → App（旧路径别名）
  * - /p/:provider      → ProviderPage（服务商详情页）
  * - /detect           → DetectPage（检测方法页，保留旧路径）
- * - /contact          → ContactPage（联系我们落地页）
- * - /contact/apply    → OnboardingPage（申请收录）
- * - /contact/change   → ChangeRequestPage（申请变更）
- * - /apply            → 重定向到 /contact/apply（向后兼容）
  */
-function renderChildRoutes(langPrefix?: string) {
-  const applyRedirect = langPrefix ? `/${langPrefix}/contact/apply` : '/contact/apply';
+function renderChildRoutes() {
   return (
     <>
       <Route index element={<App />} />
@@ -92,10 +84,6 @@ function renderChildRoutes(langPrefix?: string) {
       <Route path="p/:provider" element={<ProviderPage />} />
       <Route path="detect" element={<DetectPage />} />
       <Route path="detect/compare/:runId" element={<DetectComparePage />} />
-      <Route path="contact" element={<ContactPage />} />
-      <Route path="contact/apply" element={<OnboardingPage />} />
-      <Route path="contact/change" element={<ChangeRequestPage />} />
-      <Route path="apply" element={<Navigate to={applyRedirect} replace />} />
       <Route path="admin" element={<AdminPage />} />
     </>
   );
@@ -132,17 +120,17 @@ export default function AppRouter() {
 
         {/* 英文路径 */}
         <Route path="en" element={<LanguageLayout lang="en" />}>
-          {renderChildRoutes('en')}
+          {renderChildRoutes()}
         </Route>
 
         {/* 俄文路径 */}
         <Route path="ru" element={<LanguageLayout lang="ru" />}>
-          {renderChildRoutes('ru')}
+          {renderChildRoutes()}
         </Route>
 
         {/* 日文路径 */}
         <Route path="ja" element={<LanguageLayout lang="ja" />}>
-          {renderChildRoutes('ja')}
+          {renderChildRoutes()}
         </Route>
 
         {/* 捕获所有未匹配路径，重定向到根 */}

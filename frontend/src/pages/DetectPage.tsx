@@ -1,6 +1,5 @@
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import {
   Activity,
@@ -9,7 +8,6 @@ import {
   ListChecks,
   HelpCircle,
   ExternalLink,
-  ArrowRight,
 } from 'lucide-react';
 
 import { Header } from '../components/Header';
@@ -214,10 +212,7 @@ function DimensionStatusBadge({ dimension }: { dimension: AuditMethodologyDimens
 }
 
 export default function DetectPage() {
-  const { t, i18n } = useTranslation();
-  const navigate = useNavigate();
-  const langPrefix = LANGUAGE_PATH_MAP[i18n.language as SupportedLanguage];
-  const buildPath = (path: string) => (langPrefix ? `/${langPrefix}${path}` : path);
+  const { t } = useTranslation();
   const { data: methodology, loading: methodologyLoading, error: methodologyError } = useAuditMethodology();
   const headerStats = useMemo(
     () => ({
@@ -392,14 +387,6 @@ export default function DetectPage() {
                 </li>
               ))}
             </ol>
-            <button
-              onClick={() => navigate(buildPath('/contact/apply'))}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border border-accent/40 bg-accent/10 text-accent font-semibold hover:bg-accent/20 transition"
-            >
-              {t('detect.diy.cta')}
-              <ArrowRight size={16} />
-            </button>
-            <p className="text-sm text-muted mt-2">{t('detect.diy.ctaDesc')}</p>
           </Section>
 
           {/* ⑥ FAQ */}

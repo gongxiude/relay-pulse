@@ -40,9 +40,14 @@ export function Header({ stats, onFilterClick, onRefresh, loading, refreshCooldo
   const currentLang: SupportedLanguage = isSupportedLanguage(i18n.language) ? i18n.language : 'zh-CN';
   const langPath = LANGUAGE_PATH_MAP[currentLang];
   const homePath = langPath ? `/${langPath}` : '/';
-  const methodPath = langPath ? `/${langPath}/detect` : '/detect';
+  const methodProviderPath = langPath ? `/${langPath}/p/claudecn-gpt` : '/p/claudecn-gpt';
+  const methodPath = `${methodProviderPath}?service=cc&channel=78%3AClaudeCN-gpt`;
+  const searchParams = new URLSearchParams(location.search);
   const isHomeActive = location.pathname === homePath || location.pathname === `${homePath}/`;
-  const isMethodActive = location.pathname === methodPath;
+  const isMethodActive =
+    location.pathname === methodProviderPath &&
+    searchParams.get('service') === 'cc' &&
+    searchParams.get('channel') === '78:ClaudeCN-gpt';
 
   // 处理分享按钮点击
   const handleShare = async () => {
