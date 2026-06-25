@@ -186,4 +186,149 @@ func TestAuditDiagnosticRoundTrip(t *testing.T) {
 	if gotScore == nil || gotScore.AuthenticityScore != 90 {
 		t.Fatalf("unexpected score: %+v", gotScore)
 	}
+
+	runs, err := store.ListDiagnosticRuns(DiagnosticRunFilter{
+		Provider: "Anthropic",
+		Service:  "claude",
+		Channel:  "cc",
+		Model:    "claude-sonnet-4-6",
+		Status:   "done",
+		Limit:    5,
+	})
+	if err != nil {
+		t.Fatalf("ListDiagnosticRuns: %v", err)
+	}
+	if len(runs) != 1 || runs[0].RunID != run.RunID {
+		t.Fatalf("unexpected runs: %+v", runs)
+	}
+
+	doneCount, err := store.CountDiagnosticRuns("done")
+	if err != nil {
+		t.Fatalf("CountDiagnosticRuns: %v", err)
+	}
+	if doneCount != 1 {
+		t.Fatalf("unexpected done count: %d", doneCount)
+	}
+}
+
+func TestAuditDiagnosticGroupAndDimensionsRoundTrip(t *testing.T) {
+	store := newTestStore(t)
+
+	if err := store.SaveDiagnosticRun(&DiagnosticRun{
+		RunID:     "run-candidate",
+		Provider:  "Anthropic",
+		Service:   "claude",
+		Channel:   "cc",
+		Model:     "claude-sonnet-4-6",
+		Status:    "done",
+		CreatedAt: 1710000009,
+		UpdatedAt: 1710000009,
+	}); err != nil {
+		t.Fatalf("SaveDiagnosticRun candidate: %v", err)
+	}
+	if err := store.SaveDiagnosticRun(&DiagnosticRun{
+		RunID:     "run-baseline",
+		Provider:  "official-provider",
+		Service:   "anthropic",
+		Channel:   "80:alan-官key直连",
+		Model:     "claude-sonnet-4-6",
+		Status:    "failed_auth",
+		CreatedAt: 1710000009,
+		UpdatedAt: 1710000009,
+	}); err != nil {
+		t.Fatalf("SaveDiagnosticRun baseline: %v", err)
+	}
+
+	group := &DiagnosticRunGroup{
+		GroupID:            "group-1",
+		CandidateRunID:     "run-candidate",
+		BaselineRunID:      "run-baseline",
+		BaselineMode:       "single_run_only",
+		MethodologyVersion: "quick-probe-v1",
+		WeightsHash:        "weights-v1",
+		CreatedAt:          1710000010,
+	}
+	if err := store.SaveDiagnosticRunGroup(group); err != nil {
+		t.Fatalf("SaveDiagnosticRunGroup: %v", err)
+	}
+
+	gotGroup, err := store.GetDiagnosticRunGroup(group.GroupID)
+	if err != nil {
+		t.Fatalf("GetDiagnosticRunGroup: %v", err)
+	}
+	if gotGroup == nil || gotGroup.CandidateRunID != group.CandidateRunID || gotGroup.BaselineRunID != group.BaselineRunID {
+		t.Fatalf("unexpected group: %+v", gotGroup)
+	}
+
+	dim1 := &DiagnosticDimension{
+		RunID:           "run-candidate",
+		DimensionKey:    "model_match",
+		Weight:          14,
+		Score:           10,
+		NormalizedScore: 7.4,
+		Status:          "pass",
+		Reason:          "request model equals response model",
+		Evidence:        []byte(`{"actual":"claude-sonnet-4-6","baseline":"claude-sonnet-4-6"}`),
+		CreatedAt:       1710000011,
+	}
+	dim2 := &DiagnosticDimension{
+		RunID:           "run-candidate",
+		DimensionKey:    "identity_free_clean",
+		Weight:          7,
+		Score:           5,
+		NormalizedScore: 2.6,
+		Status:          "partial",
+		Reason:          "wrapper identity exposed once",
+		Evidence:        []byte(`{"actual":"I am Claude","baseline":"I am Claude"}`),
+		CreatedAt:       1710000012,
+	}
+	for _, dim := range []*DiagnosticDimension{dim1, dim2} {
+		if err := store.SaveDiagnosticDimension(dim); err != nil {
+			t.Fatalf("SaveDiagnosticDimension(%s): %v", dim.DimensionKey, err)
+		}
+	}
+
+	dimensions, err := store.ListDiagnosticDimensions("run-candidate")
+	if err != nil {
+		t.Fatalf("ListDiagnosticDimensions: %v", err)
+	}
+	if len(dimensions) != 2 {
+		t.Fatalf("unexpected dimensions len: %d", len(dimensions))
+	}
+	if dimensions[0].DimensionKey != "model_match" || dimensions[1].DimensionKey != "identity_free_clean" {
+		t.Fatalf("unexpected dimension order: %+v", dimensions)
+	}
+	if !strings.Contains(string(dimensions[0].Evidence), `"actual":"claude-sonnet-4-6"`) {
+		t.Fatalf("unexpected dimension evidence: %s", string(dimensions[0].Evidence))
+	}
+
+	baseline := &DiagnosticBaselineRun{
+		BaselineID:         "baseline-1",
+		Service:            "anthropic",
+		ModelFamily:        "claude-sonnet-4",
+		RunID:              "run-baseline",
+		Provider:           "official-provider",
+		Channel:            "80:alan-官key直连",
+		Source:             "self_reported_official",
+		MethodologyVersion: "quick-probe-v1",
+		CapturedAt:         1710000020,
+	}
+	if err := store.SaveDiagnosticBaselineRun(baseline); err != nil {
+		t.Fatalf("SaveDiagnosticBaselineRun: %v", err)
+	}
+	gotBaseline, err := store.GetLatestDiagnosticBaselineRun("anthropic", "claude-sonnet-4", "quick-probe-v1", "")
+	if err != nil {
+		t.Fatalf("GetLatestDiagnosticBaselineRun: %v", err)
+	}
+	if gotBaseline == nil || gotBaseline.RunID != baseline.RunID || gotBaseline.Source != baseline.Source {
+		t.Fatalf("unexpected baseline: %+v", gotBaseline)
+	}
+
+	summary, err := store.GetDiagnosticDimensionSummary()
+	if err != nil {
+		t.Fatalf("GetDiagnosticDimensionSummary: %v", err)
+	}
+	if summary == nil || summary.RunCount != 1 || summary.DimensionCount != 2 {
+		t.Fatalf("unexpected dimension summary: %+v", summary)
+	}
 }

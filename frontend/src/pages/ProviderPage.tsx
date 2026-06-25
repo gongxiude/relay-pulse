@@ -7,6 +7,7 @@ import { Header } from '../components/Header';
 import { Footer } from '../components/Footer';
 import { ChannelTypeIcon, parseChannelType } from '../components/ChannelTypeIcon';
 import { useAuditChannels } from '../hooks/useAuditChannels';
+import { useAuditDiagnosticLatest } from '../hooks/useAuditDiagnosticLatest';
 import { useMonitorData } from '../hooks/useMonitorData';
 import { useRpdiagScores, lookupRpdiagScore } from '../hooks/useRpdiagScores';
 import { useSeoMeta } from '../hooks/useSeoMeta';
@@ -40,6 +41,9 @@ interface ModelDetailRow {
   ttftMs: number | null;
   enabled: boolean;
   sourceKey: SourceKey;
+  latestRunId?: string | null;
+  compareUrl?: string | null;
+  latestMethodologyVersion?: string | null;
 }
 
 const SERVICE_TAB_LABELS: Record<ServiceTab, string> = {
@@ -68,6 +72,10 @@ export default function ProviderPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
   const seo = useSeoMeta({ pathname: location.pathname, language: 'zh-CN' });
+  const langPrefix = useMemo(() => {
+    const match = location.pathname.match(/^\/(en|ru|ja)(\/|$)/);
+    return match ? `/${match[1]}` : '';
+  }, [location.pathname]);
 
   const normalizedProvider = canonicalize(provider);
   const { channels: auditChannels, loading: auditLoading, error: auditError } = useAuditChannels();
@@ -177,6 +185,28 @@ export default function ProviderPage() {
     );
   }, [currentSnapshot, rpdiagScores, matchedMonitor]);
 
+  const {
+    items: latestDiagnostics,
+    loading: latestDiagnosticsLoading,
+    error: latestDiagnosticsError,
+  } = useAuditDiagnosticLatest({
+    provider: currentSnapshot?.provider,
+    service: currentSnapshot ? inferAuditServiceType(currentSnapshot) : undefined,
+    channel: currentSnapshot?.channel,
+    limit: 10,
+  });
+
+  const latestDiagnosticMap = useMemo(() => {
+    const map = new Map<string, typeof latestDiagnostics[number]>();
+    latestDiagnostics.forEach((item) => {
+      const key = normalizeModelKey(item.run.model);
+      if (key && !map.has(key)) {
+        map.set(key, item);
+      }
+    });
+    return map;
+  }, [latestDiagnostics]);
+
   const modelOptions = useMemo(() => {
     if (!currentSnapshot) return [];
     return splitModels(currentSnapshot.model);
@@ -262,14 +292,19 @@ export default function ProviderPage() {
       .filter((model) => selectedModel === 'all' || model === selectedModel)
       .map((modelName) => {
         const rpModel = modelMap.get(normalizeModelKey(modelName));
+        const latestDiagnostic = latestDiagnosticMap.get(normalizeModelKey(modelName));
+        const latestScore = latestDiagnostic?.score?.overall_score ?? null;
+        const localCompareUrl = latestDiagnostic?.run.run_id
+          ? `${langPrefix}/detect/compare/${latestDiagnostic.run.run_id}`
+          : null;
         return {
           id: `${currentSnapshot.newapi_channel_id}-${modelName}`,
-          rankScore: rpModel?.score ?? -1,
+          rankScore: latestScore ?? rpModel?.score ?? -1,
           providerName: currentSnapshot.provider,
           channelLabel: extractAuditChannelName(currentSnapshot.channel),
           modelName,
-          finalScore: rpModel?.score ?? null,
-          fingerprintScore: rpModel?.score ?? currentRpdiag?.max_score ?? null,
+          finalScore: latestScore ?? rpModel?.score ?? null,
+          fingerprintScore: latestScore ?? rpModel?.score ?? currentRpdiag?.max_score ?? null,
           trend: rpModel?.trend,
           testsCount: pickTestsCount(rpModel?.trend),
           uptime: matchedMonitor?.uptime ?? null,
@@ -278,6 +313,9 @@ export default function ProviderPage() {
           ttftMs: null,
           enabled: currentSnapshot.enabled,
           sourceKey: inferSourceKey(currentSnapshot),
+          latestRunId: latestDiagnostic?.run.run_id ?? null,
+          compareUrl: localCompareUrl,
+          latestMethodologyVersion: latestDiagnostic?.score?.methodology_version ?? latestDiagnostic?.run.methodology_version ?? null,
         } satisfies ModelDetailRow;
       })
       .sort((a, b) => {
@@ -289,7 +327,7 @@ export default function ProviderPage() {
       ...row,
       id: `${row.id}-${index}`,
     }));
-  }, [currentSnapshot, currentRpdiag, matchedMonitor, selectedModel]);
+  }, [currentSnapshot, currentRpdiag, langPrefix, latestDiagnosticMap, matchedMonitor, selectedModel]);
 
   const headerStats = useMemo(() => {
     const total = modelRows.length;
@@ -444,11 +482,11 @@ export default function ProviderPage() {
           </section>
 
           <main className="overflow-x-auto rounded-2xl border border-default/70 bg-surface/55 shadow-xl backdrop-blur-sm">
-            {(auditLoading || monitorLoading) && modelRows.length === 0 ? (
+            {(auditLoading || monitorLoading || latestDiagnosticsLoading) && modelRows.length === 0 ? (
               <div className="px-6 py-16 text-center text-muted">正在加载模型级详情…</div>
-            ) : auditError || monitorError ? (
+            ) : auditError || monitorError || latestDiagnosticsError ? (
               <div className="px-6 py-16 text-center text-danger">
-                {auditError || monitorError}
+                {auditError || monitorError || latestDiagnosticsError}
               </div>
             ) : !currentSnapshot ? (
               <div className="px-6 py-16 text-center text-muted">当前筛选下没有可展示的通道。</div>
@@ -467,6 +505,7 @@ export default function ProviderPage() {
                     <th className="px-4 py-4 font-medium">可用率 30D</th>
                     <th className="px-4 py-4 font-medium">首 TOKEN 30D</th>
                     <th className="px-4 py-4 font-medium">平均延迟 30D</th>
+                    <th className="px-4 py-4 font-medium">最近检测</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -510,6 +549,20 @@ export default function ProviderPage() {
                             </span>
                           )}
                         </div>
+                      </td>
+                      <td className="px-4 py-4">
+                        {row.compareUrl ? (
+                          <a
+                            href={row.compareUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center rounded-md bg-blue-500/15 px-2 py-1 text-xs font-semibold text-blue-300 hover:bg-blue-500/20"
+                          >
+                            {row.latestMethodologyVersion || '查看结果'}
+                          </a>
+                        ) : (
+                          <span className="text-muted text-sm">暂无</span>
+                        )}
                       </td>
                     </tr>
                   ))}

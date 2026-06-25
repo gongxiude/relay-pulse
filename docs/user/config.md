@@ -2122,12 +2122,19 @@ RelayPulse 的 new-api 审计链路只从环境变量读取凭据，不把凭据
 NEWAPI_BASE_URL=https://new-api.example.com
 NEWAPI_ACCESS_TOKEN=your-newapi-access-token
 NEWAPI_USER_ID=your-newapi-user-id
+
+# 可选：主动探针使用独立 relay 凭证
+NEWAPI_PROBE_ACCESS_TOKEN=your-relay-probe-token
+NEWAPI_PROBE_USER_ID=your-relay-probe-user-id
 ```
 
 **说明**：
 - `NEWAPI_BASE_URL`：new-api HTTP API 基地址
-- `NEWAPI_ACCESS_TOKEN`：只读访问令牌
-- `NEWAPI_USER_ID`：当前审计身份标识
+- `NEWAPI_ACCESS_TOKEN`：只读同步令牌，用于 `/api/channel`、`/api/log` 等审计同步接口
+- `NEWAPI_USER_ID`：只读同步时携带的用户标识
+- `NEWAPI_PROBE_ACCESS_TOKEN`：主动探针调用 `/v1/*` relay 接口时使用的独立凭证；未设置时回退到 `NEWAPI_ACCESS_TOKEN`
+- `NEWAPI_PROBE_USER_ID`：主动探针使用的用户标识；未设置时回退到 `NEWAPI_USER_ID`
+- 如果 `NEWAPI_ACCESS_TOKEN` 只能读取管理接口、不能直接访问 relay `/v1/chat/completions`，必须额外配置 `NEWAPI_PROBE_ACCESS_TOKEN`
 - 这些变量在启动期读取，缺失会阻止服务启动
 - `.env` 文件可用于本地开发和 Docker 启动，但不参与运行时热更新
 

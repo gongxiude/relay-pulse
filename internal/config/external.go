@@ -26,11 +26,14 @@ type GitHubConfig struct {
 }
 
 // NewAPIConfig new-api 只读接入配置。
-// 凭据只允许来自环境变量：NEWAPI_BASE_URL, NEWAPI_ACCESS_TOKEN, NEWAPI_USER_ID。
+// 同步凭据来自 NEWAPI_BASE_URL / NEWAPI_ACCESS_TOKEN / NEWAPI_USER_ID。
+// 主动探针可选使用独立凭据：NEWAPI_PROBE_ACCESS_TOKEN / NEWAPI_PROBE_USER_ID。
 type NewAPIConfig struct {
 	BaseURL             string `yaml:"-" json:"base_url"`
 	AccessToken         string `yaml:"-" json:"-"`
 	UserID              string `yaml:"-" json:"-"`
+	ProbeAccessToken    string `yaml:"-" json:"-"`
+	ProbeUserID         string `yaml:"-" json:"-"`
 	Timeout             string `yaml:"timeout" json:"timeout"`
 	ChannelSyncInterval string `yaml:"channel_sync_interval" json:"channel_sync_interval"`
 	LogSyncInterval     string `yaml:"log_sync_interval" json:"log_sync_interval"`

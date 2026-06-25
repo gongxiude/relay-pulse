@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -21,9 +22,15 @@ type auditReadStore interface {
 	ListLatestChannelSnapshots() ([]storage.ChannelSnapshot, error)
 	GetLogSyncCursor(string) (*storage.LogSyncCursor, error)
 	ListNewAPILogsSince(int64) ([]storage.NewAPILog, error)
+	ListDiagnosticRuns(storage.DiagnosticRunFilter) ([]*storage.DiagnosticRun, error)
+	CountDiagnosticRuns(string) (int, error)
+	GetDiagnosticDimensionSummary() (*storage.DiagnosticDimensionSummary, error)
 	GetDiagnosticRun(string) (*storage.DiagnosticRun, error)
 	ListDiagnosticSteps(string) ([]*storage.DiagnosticStep, error)
 	GetDiagnosticScore(string) (*storage.DiagnosticScore, error)
+	GetDiagnosticRunGroup(string) (*storage.DiagnosticRunGroup, error)
+	GetLatestDiagnosticBaselineRun(service, modelFamily, methodologyVersion, excludeRunID string) (*storage.DiagnosticBaselineRun, error)
+	ListDiagnosticDimensions(string) ([]*storage.DiagnosticDimension, error)
 	SaveNewAPILogs([]storage.NewAPILog) error
 	ReplaceAuditTargets([]storage.AuditTarget) error
 	SaveChannelSnapshot(*storage.ChannelSnapshot) error
@@ -35,6 +42,9 @@ type auditDiagnosticStore interface {
 	SaveDiagnosticRun(*storage.DiagnosticRun) error
 	SaveDiagnosticStep(*storage.DiagnosticStep) error
 	SaveDiagnosticScore(*storage.DiagnosticScore) error
+	SaveDiagnosticRunGroup(*storage.DiagnosticRunGroup) error
+	SaveDiagnosticDimension(*storage.DiagnosticDimension) error
+	SaveDiagnosticBaselineRun(*storage.DiagnosticBaselineRun) error
 }
 
 func (h *Handler) auditStore() (auditReadStore, bool) {
@@ -160,8 +170,8 @@ func (h *Handler) PostAuditDiagnosticSubmit(c *gin.Context) {
 	h.cfgMu.RLock()
 	if h.config != nil {
 		target.BaseURL = h.config.NewAPI.BaseURL
-		target.AccessToken = h.config.NewAPI.AccessToken
-		target.UserID = h.config.NewAPI.UserID
+		target.AccessToken = firstNonEmptyString(h.config.NewAPI.ProbeAccessToken, h.config.NewAPI.AccessToken)
+		target.UserID = firstNonEmptyString(h.config.NewAPI.ProbeUserID, h.config.NewAPI.UserID)
 	}
 	h.cfgMu.RUnlock()
 	if strings.TrimSpace(target.BaseURL) == "" {
@@ -251,6 +261,261 @@ func (h *Handler) GetAuditCompare(c *gin.Context) {
 	h.writeAuditDiagnostic(c, true)
 }
 
+func (h *Handler) GetAuditMethodology(c *gin.Context) {
+	store, ok := h.auditStore()
+	if !ok {
+		apiError(c, http.StatusNotImplemented, ErrCodeInternalError, "当前存储不支持审计接口")
+		return
+	}
+	spec := audit.CurrentMethodologySpec()
+	runs, err := store.ListDiagnosticRuns(storage.DiagnosticRunFilter{
+		Status: "done",
+		Limit:  1000,
+	})
+	if err != nil {
+		apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+		return
+	}
+	doneRuns := 0
+	dimensionRuns := 0
+	dimensionRowCount := 0
+	for _, run := range runs {
+		score, err := store.GetDiagnosticScore(run.RunID)
+		if err != nil {
+			apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+			return
+		}
+		if !isUsableDiagnosticRun(run, score) {
+			continue
+		}
+		doneRuns++
+		dimensions, err := store.ListDiagnosticDimensions(run.RunID)
+		if err != nil {
+			apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+			return
+		}
+		if len(dimensions) > 0 {
+			dimensionRuns++
+			dimensionRowCount += len(dimensions)
+		}
+	}
+	dimensions := make([]auditMethodologyDimensionResponse, 0, len(spec.Dimensions))
+	for _, dimension := range spec.Dimensions {
+		dimensions = append(dimensions, auditMethodologyDimensionResponse{
+			Key:         dimension.Key,
+			Weight:      dimension.Weight,
+			Group:       dimension.Group,
+			Description: dimension.Description,
+			Implemented: dimension.Implemented,
+			Active:      dimension.Active,
+			Phase:       dimension.Phase,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": auditMethodologyResponse{
+			Summary: auditMethodologySummaryResponse{
+				Version:           spec.Version,
+				WeightsHash:       spec.WeightsHash,
+				TotalDimensions:   len(spec.Dimensions),
+				TotalWeight:       spec.TotalWeight,
+				ImplementedCount:  spec.ImplementedCount,
+				ImplementedWeight: spec.ImplementedWeight,
+				ActiveCount:       spec.ActiveCount,
+				ActiveWeight:      spec.ActiveWeight,
+			},
+			Coverage: auditMethodologyCoverageResponse{
+				DoneRuns:          doneRuns,
+				DimensionRuns:     dimensionRuns,
+				DimensionRowCount: dimensionRowCount,
+			},
+			Dimensions: dimensions,
+		},
+	})
+}
+
+func (h *Handler) GetAuditDiagnosticLatest(c *gin.Context) {
+	store, ok := h.auditStore()
+	if !ok {
+		apiError(c, http.StatusNotImplemented, ErrCodeInternalError, "当前存储不支持审计接口")
+		return
+	}
+	limit := 1
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value <= 0 {
+			apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "limit 参数错误")
+			return
+		}
+		if value > 20 {
+			value = 20
+		}
+		limit = value
+	}
+	runs, err := store.ListDiagnosticRuns(storage.DiagnosticRunFilter{
+		Provider: strings.TrimSpace(c.Query("provider")),
+		Service:  strings.TrimSpace(c.Query("service")),
+		Channel:  strings.TrimSpace(c.Query("channel")),
+		Model:    strings.TrimSpace(c.Query("model")),
+		Status:   "done",
+		Limit:    limit * 10,
+	})
+	if err != nil {
+		apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+		return
+	}
+	items := make([]auditDiagnosticLatestItemResponse, 0, len(runs))
+	for _, run := range runs {
+		score, err := store.GetDiagnosticScore(run.RunID)
+		if err != nil {
+			apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+			return
+		}
+		if !isUsableDiagnosticRun(run, score) {
+			continue
+		}
+		items = append(items, auditDiagnosticLatestItemResponse{
+			Run:        buildAuditDiagnosticRun(run),
+			Score:      buildAuditDiagnosticScore(run, score),
+			CompareURL: "/api/audit/compare/" + run.RunID,
+		})
+		if len(items) >= limit {
+			break
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": auditDiagnosticLatestResponse{
+			Items: items,
+			Meta: auditDiagnosticLatestMetaResponse{
+				Limit: limit,
+				Count: len(items),
+			},
+		},
+	})
+}
+
+func isUsableDiagnosticRun(run *storage.DiagnosticRun, score *storage.DiagnosticScore) bool {
+	if run == nil || strings.TrimSpace(run.Status) != "done" {
+		return false
+	}
+	outputMap := decodeAuditJSONMap(run.Output)
+	if strings.HasPrefix(strings.TrimSpace(mapStringValue(outputMap, "run_status")), "failed_") {
+		return false
+	}
+	if skippedTags := decodeAuditJSONStringList(anyJSONValue(outputMap, "tags")); containsString(skippedTags, "request_error") {
+		return false
+	}
+	if score != nil && containsString(decodeAuditJSONStringList(score.Tags), "request_error") {
+		return false
+	}
+	return true
+}
+
+func containsString(items []string, target string) bool {
+	target = strings.TrimSpace(target)
+	for _, item := range items {
+		if strings.TrimSpace(item) == target {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Handler) PostAuditDiagnosticBackfill(c *gin.Context) {
+	store, ok := h.storage.(auditDiagnosticStore)
+	if !ok {
+		apiError(c, http.StatusNotImplemented, ErrCodeInternalError, "当前存储不支持诊断提交")
+		return
+	}
+	var req auditDiagnosticBackfillRequest
+	if c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&req); err != nil && err.Error() != "EOF" {
+			apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "请求参数错误")
+			return
+		}
+	}
+	if req.MaxTargets <= 0 {
+		req.MaxTargets = 12
+	}
+	if req.MaxTargets > 50 {
+		req.MaxTargets = 50
+	}
+	if req.MaxModelsPerChannel <= 0 {
+		req.MaxModelsPerChannel = 1
+	}
+	if req.MaxModelsPerChannel > 3 {
+		req.MaxModelsPerChannel = 3
+	}
+	if req.LookbackHours <= 0 {
+		req.LookbackHours = 24
+	}
+	targets, err := store.ListAuditTargets()
+	if err != nil {
+		apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+		return
+	}
+	logs, err := store.ListNewAPILogsSince(time.Now().Add(-time.Duration(req.LookbackHours) * time.Hour).Unix())
+	if err != nil {
+		apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+		return
+	}
+	selected := selectAuditBackfillTargets(targets, logs, req.MaxTargets, req.MaxModelsPerChannel)
+	runner := audit.NewDiagnosticRunner(nil)
+	items := make([]auditDiagnosticBackfillItemResponse, 0, len(selected))
+	started := 0
+	failed := 0
+	for _, target := range selected {
+		runTarget := audit.DiagnosticTarget{
+			Provider:     strings.TrimSpace(target.Provider),
+			Service:      strings.TrimSpace(target.Service),
+			Channel:      strings.TrimSpace(target.Channel),
+			Model:        strings.TrimSpace(target.Model),
+			RequestModel: strings.TrimSpace(target.RequestModel),
+		}
+		if runTarget.RequestModel == "" {
+			runTarget.RequestModel = runTarget.Model
+		}
+		h.cfgMu.RLock()
+		if h.config != nil {
+			runTarget.BaseURL = h.config.NewAPI.BaseURL
+			runTarget.AccessToken = firstNonEmptyString(h.config.NewAPI.ProbeAccessToken, h.config.NewAPI.AccessToken)
+			runTarget.UserID = firstNonEmptyString(h.config.NewAPI.ProbeUserID, h.config.NewAPI.UserID)
+		}
+		h.cfgMu.RUnlock()
+		if strings.TrimSpace(runTarget.BaseURL) == "" {
+			apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "new-api 配置缺失")
+			return
+		}
+		run, err := runner.Run(c.Request.Context(), runTarget, store)
+		item := auditDiagnosticBackfillItemResponse{
+			Provider: runTarget.Provider,
+			Service:  runTarget.Service,
+			Channel:  runTarget.Channel,
+			Model:    runTarget.Model,
+		}
+		if err != nil {
+			item.Status = "failed"
+			item.Error = err.Error()
+			failed++
+		} else {
+			item.Status = "started"
+			item.RunID = run.RunID
+			started++
+		}
+		items = append(items, item)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": auditDiagnosticBackfillResponse{
+			Selected: len(selected),
+			Started:  started,
+			Failed:   failed,
+			Items:    items,
+		},
+	})
+}
+
 func (h *Handler) writeAuditDiagnostic(c *gin.Context, includeCompare bool) {
 	store, ok := h.auditStore()
 	if !ok {
@@ -281,17 +546,243 @@ func (h *Handler) writeAuditDiagnostic(c *gin.Context, includeCompare bool) {
 		apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
 		return
 	}
-	resp := auditDiagnosticResponse{Run: run, Score: score}
-	respSteps := make([]any, 0, len(steps))
-	for _, step := range steps {
-		respSteps = append(respSteps, step)
+	group, err := loadAuditDiagnosticGroup(store, run)
+	if err != nil {
+		apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+		return
 	}
-	resp.Steps = respSteps
+	baselineResp, err := loadAuditBaselineResponse(store, group)
+	if err != nil {
+		apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+		return
+	}
+	dimensions, err := store.ListDiagnosticDimensions(runID)
+	if err != nil {
+		apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+		return
+	}
+	resp := buildAuditDiagnosticResponse(run, score, steps)
 	if includeCompare {
-		c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"run": run, "score": score, "compare": respSteps}})
+		c.JSON(http.StatusOK, gin.H{"success": true, "data": buildAuditCompareResponse(resp, baselineResp, group, dimensions)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": resp})
+}
+
+func loadAuditDiagnosticGroup(store auditReadStore, run *storage.DiagnosticRun) (*storage.DiagnosticRunGroup, error) {
+	if run == nil {
+		return nil, nil
+	}
+	input := decodeAuditJSONMap(run.Input)
+	groupID := mapStringValue(input, "group_id")
+	if groupID == "" {
+		return nil, nil
+	}
+	return store.GetDiagnosticRunGroup(groupID)
+}
+
+func loadAuditBaselineResponse(store auditReadStore, group *storage.DiagnosticRunGroup) (*auditDiagnosticResponse, error) {
+	if group == nil || strings.TrimSpace(group.BaselineRunID) == "" {
+		return nil, nil
+	}
+	run, err := store.GetDiagnosticRun(group.BaselineRunID)
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, nil
+	}
+	steps, err := store.ListDiagnosticSteps(group.BaselineRunID)
+	if err != nil {
+		return nil, err
+	}
+	score, err := store.GetDiagnosticScore(group.BaselineRunID)
+	if err != nil {
+		return nil, err
+	}
+	resp := buildAuditDiagnosticResponse(run, score, steps)
+	return &resp, nil
+}
+
+func buildAuditDiagnosticResponse(run *storage.DiagnosticRun, score *storage.DiagnosticScore, steps []*storage.DiagnosticStep) auditDiagnosticResponse {
+	resp := auditDiagnosticResponse{
+		Run:   buildAuditDiagnosticRun(run),
+		Score: buildAuditDiagnosticScore(run, score),
+		Steps: make([]auditDiagnosticStepResponse, 0, len(steps)),
+	}
+	for _, step := range steps {
+		resp.Steps = append(resp.Steps, buildAuditDiagnosticStep(step))
+	}
+	return resp
+}
+
+func buildAuditCompareResponse(candidate auditDiagnosticResponse, baseline *auditDiagnosticResponse, group *storage.DiagnosticRunGroup, dimensions []*storage.DiagnosticDimension) auditCompareResponse {
+	steps := make([]auditCompareStepResponse, 0, len(candidate.Steps))
+	baselineStepMap := make(map[int]auditDiagnosticStepResponse)
+	if baseline != nil {
+		for _, step := range baseline.Steps {
+			baselineStepMap[step.StepIndex] = step
+		}
+	}
+	for _, step := range candidate.Steps {
+		var baselineStep *auditDiagnosticStepResponse
+		if item, ok := baselineStepMap[step.StepIndex]; ok {
+			copyItem := item
+			baselineStep = &copyItem
+		}
+		steps = append(steps, auditCompareStepResponse{
+			StepIndex: step.StepIndex,
+			StepName:  step.StepName,
+			Candidate: step,
+			Baseline:  baselineStep,
+		})
+	}
+	summary := auditCompareSummaryResponse{}
+	if candidate.Score != nil {
+		summary.OverallScore = candidate.Score.OverallScore
+		summary.ActiveWeight = candidate.Score.ActiveWeight
+		summary.SkippedDimensions = candidate.Score.SkippedDimensions
+		summary.Tags = candidate.Score.Tags
+	}
+	dimensionPayload := make([]any, 0, len(dimensions))
+	for _, dimension := range dimensions {
+		dimensionPayload = append(dimensionPayload, dimension)
+	}
+	groupResp := auditCompareGroupResponse{
+		GroupID:            candidate.Run.GroupID,
+		CandidateRunID:     candidate.Run.RunID,
+		BaselineMode:       firstNonEmptyString(candidate.Run.BaselineMode, "single_run_only"),
+		MethodologyVersion: firstNonEmptyString(candidate.Run.MethodologyVersion, "quick-probe-v1"),
+		WeightsHash:        candidate.Run.WeightsHash,
+	}
+	if group != nil {
+		groupResp.GroupID = group.GroupID
+		groupResp.CandidateRunID = group.CandidateRunID
+		groupResp.BaselineRunID = group.BaselineRunID
+		groupResp.BaselineMode = firstNonEmptyString(group.BaselineMode, groupResp.BaselineMode)
+		groupResp.MethodologyVersion = firstNonEmptyString(group.MethodologyVersion, groupResp.MethodologyVersion)
+		groupResp.WeightsHash = firstNonEmptyString(group.WeightsHash, groupResp.WeightsHash)
+	}
+	return auditCompareResponse{
+		Group:      groupResp,
+		Candidate:  candidate,
+		Baseline:   baseline,
+		Dimensions: dimensionPayload,
+		Steps:      steps,
+		Summary:    summary,
+	}
+}
+
+func buildAuditDiagnosticRun(run *storage.DiagnosticRun) auditDiagnosticRunResponse {
+	if run == nil {
+		return auditDiagnosticRunResponse{}
+	}
+	inputMap := decodeAuditJSONMap(run.Input)
+	outputMap := decodeAuditJSONMap(run.Output)
+	return auditDiagnosticRunResponse{
+		RunID:              run.RunID,
+		Provider:           run.Provider,
+		Service:            run.Service,
+		Channel:            run.Channel,
+		Model:              run.Model,
+		Status:             run.Status,
+		CreatedAt:          run.CreatedAt,
+		UpdatedAt:          run.UpdatedAt,
+		RequestModel:       mapStringValue(inputMap, "request_model"),
+		BaseURL:            mapStringValue(inputMap, "base_url"),
+		GroupID:            mapStringValue(inputMap, "group_id"),
+		BaselineMode:       mapStringValue(outputMap, "baseline_mode"),
+		MethodologyVersion: firstNonEmptyString(mapStringValue(outputMap, "methodology_version"), "quick-probe-v1"),
+		WeightsHash:        mapStringValue(outputMap, "weights_hash"),
+		CandidateType:      mapStringValue(outputMap, "candidate_type"),
+		Input:              decodeAuditJSONValue(run.Input),
+		Output:             decodeAuditJSONValue(run.Output),
+	}
+}
+
+func buildAuditDiagnosticScore(run *storage.DiagnosticRun, score *storage.DiagnosticScore) *auditDiagnosticScoreResponse {
+	if score == nil {
+		return nil
+	}
+	outputMap := map[string]any{}
+	if run != nil {
+		outputMap = decodeAuditJSONMap(run.Output)
+	}
+	resp := &auditDiagnosticScoreResponse{
+		RunID:              score.RunID,
+		AuthenticityScore:  score.AuthenticityScore,
+		ProtocolScore:      score.ProtocolScore,
+		SSEScore:           score.SSEScore,
+		OverallScore:       numberValueAsFloat(outputMap, "overall_score", averageFloat64(float64(score.AuthenticityScore), float64(score.ProtocolScore), float64(score.SSEScore))),
+		ActiveWeight:       int(numberValue(outputMap, "active_weight")),
+		MethodologyVersion: firstNonEmptyString(mapStringValue(outputMap, "methodology_version"), "quick-probe-v1"),
+		WeightsHash:        mapStringValue(outputMap, "weights_hash"),
+		Tags:               decodeAuditJSONStringList(score.Tags),
+	}
+	if resp.ActiveWeight == 0 {
+		resp.ActiveWeight = 3
+	}
+	if skipped := decodeAuditJSONStringList(anyJSONValue(outputMap, "skipped_dimensions")); len(skipped) > 0 {
+		resp.SkippedDimensions = skipped
+	}
+	return resp
+}
+
+func buildAuditDiagnosticStep(step *storage.DiagnosticStep) auditDiagnosticStepResponse {
+	if step == nil {
+		return auditDiagnosticStepResponse{}
+	}
+	meta := decodeAuditJSONMap(step.ExecutionMeta)
+	stepName := mapStringValue(meta, "step_name")
+	if stepName == "" {
+		stepName = inferDiagnosticStepName(step.StepIndex, step.Prompt)
+	}
+	sessionMode := "same_session"
+	if strings.Contains(strings.ToLower(step.ResultSummary), "fresh_session") {
+		sessionMode = "fresh_session"
+	}
+	return auditDiagnosticStepResponse{
+		ID:                  step.ID,
+		RunID:               step.RunID,
+		StepIndex:           step.StepIndex,
+		StepName:            stepName,
+		SessionMode:         sessionMode,
+		Prompt:              step.Prompt,
+		ResolvedPrompt:      step.ResolvedPrompt,
+		ResponsePreview:     step.ResponsePreview,
+		ResultSummary:       step.ResultSummary,
+		Execution:           buildAuditDiagnosticExecution(meta),
+		ChannelFingerprint:  step.ChannelFingerprint,
+		ProviderFingerprint: step.ProviderFingerprint,
+		ErrorMessage:        step.ErrorMessage,
+		CreatedAt:           step.CreatedAt,
+	}
+}
+
+func buildAuditDiagnosticExecution(meta map[string]any) auditDiagnosticExecutionResponse {
+	headers := mapString(meta["response_headers"])
+	usage := mapAny(meta["usage"])
+	rawMeta := any(meta)
+	if len(meta) == 0 {
+		rawMeta = nil
+	}
+	return auditDiagnosticExecutionResponse{
+		StepName:        mapStringValue(meta, "step_name"),
+		StatusCode:      int(numberValue(meta, "status_code")),
+		DurationMs:      firstPositive(numberValue(meta, "duration_ms"), numberValue(meta, "latency_ms")),
+		LatencyMs:       numberValue(meta, "latency_ms"),
+		HTTPTTFBMs:      numberValue(meta, "http_ttfb_ms"),
+		FirstTextMs:     numberValue(meta, "first_text_ms"),
+		TTFTMs:          numberValue(meta, "ttft_ms"),
+		FinishReason:    mapStringValue(meta, "finish_reason"),
+		RequestURL:      mapStringValue(meta, "request_url"),
+		RequestBody:     anyJSONValue(meta, "request_body"),
+		ResponseText:    mapStringValue(meta, "response_text"),
+		ResponseHeaders: headers,
+		Usage:           usage,
+		StreamChunks:    stringList(meta["stream_chunks"]),
+		RawMeta:         rawMeta,
+	}
 }
 
 func normalizeAuditWindow(raw string) string {
@@ -392,6 +883,90 @@ func buildAuditRankingRows(targets []storage.AuditTarget, logs []storage.NewAPIL
 	return rows
 }
 
+func selectAuditBackfillTargets(targets []storage.AuditTarget, logs []storage.NewAPILog, maxTargets, maxModelsPerChannel int) []storage.AuditTarget {
+	if maxTargets <= 0 || maxModelsPerChannel <= 0 {
+		return nil
+	}
+	type weightedTarget struct {
+		target  storage.AuditTarget
+		hasLogs bool
+	}
+	logHit := make(map[string]struct{}, len(logs))
+	for _, log := range logs {
+		logHit[strconv.FormatInt(log.ChannelID, 10)+"|"+strings.TrimSpace(log.ModelName)] = struct{}{}
+	}
+	grouped := make(map[string][]weightedTarget)
+	groupOrder := make([]string, 0)
+	for _, target := range targets {
+		if !target.Enabled {
+			continue
+		}
+		channelID := extractChannelID(target.Channel)
+		modelKey := strings.TrimSpace(target.RequestModel)
+		if modelKey == "" {
+			modelKey = strings.TrimSpace(target.Model)
+		}
+		_, hasLogs := logHit[channelID+"|"+modelKey]
+		groupKey := strings.Join([]string{
+			strings.TrimSpace(target.Provider),
+			strings.TrimSpace(target.Service),
+			strings.TrimSpace(target.Channel),
+		}, "|")
+		if _, ok := grouped[groupKey]; !ok {
+			groupOrder = append(groupOrder, groupKey)
+		}
+		grouped[groupKey] = append(grouped[groupKey], weightedTarget{target: target, hasLogs: hasLogs})
+	}
+	sort.SliceStable(groupOrder, func(i, j int) bool {
+		leftHasLogs := false
+		rightHasLogs := false
+		for _, item := range grouped[groupOrder[i]] {
+			if item.hasLogs {
+				leftHasLogs = true
+				break
+			}
+		}
+		for _, item := range grouped[groupOrder[j]] {
+			if item.hasLogs {
+				rightHasLogs = true
+				break
+			}
+		}
+		if leftHasLogs != rightHasLogs {
+			return leftHasLogs
+		}
+		return groupOrder[i] < groupOrder[j]
+	})
+	selected := make([]storage.AuditTarget, 0, maxTargets)
+	for _, groupKey := range groupOrder {
+		items := grouped[groupKey]
+		sort.SliceStable(items, func(i, j int) bool {
+			if items[i].hasLogs != items[j].hasLogs {
+				return items[i].hasLogs
+			}
+			if items[i].target.Priority != items[j].target.Priority {
+				return items[i].target.Priority > items[j].target.Priority
+			}
+			if items[i].target.Weight != items[j].target.Weight {
+				return items[i].target.Weight > items[j].target.Weight
+			}
+			return items[i].target.Model < items[j].target.Model
+		})
+		picked := 0
+		for _, item := range items {
+			if picked >= maxModelsPerChannel || len(selected) >= maxTargets {
+				break
+			}
+			selected = append(selected, item.target)
+			picked++
+		}
+		if len(selected) >= maxTargets {
+			break
+		}
+	}
+	return selected
+}
+
 func extractChannelID(channel string) string {
 	head := strings.TrimSpace(channel)
 	if idx := strings.Index(head, ":"); idx >= 0 {
@@ -402,4 +977,221 @@ func extractChannelID(channel string) string {
 		return ""
 	}
 	return head
+}
+
+func decodeAuditJSONMap(raw json.RawMessage) map[string]any {
+	if len(raw) == 0 {
+		return map[string]any{}
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err == nil && out != nil {
+		return out
+	}
+	return map[string]any{}
+}
+
+func decodeAuditJSONValue(raw json.RawMessage) any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var out any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+func decodeAuditJSONStringList(raw any) []string {
+	switch v := raw.(type) {
+	case nil:
+		return nil
+	case json.RawMessage:
+		var items []string
+		if err := json.Unmarshal(v, &items); err == nil {
+			return items
+		}
+	case []string:
+		return append([]string(nil), v...)
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+func mapStringValue(m map[string]any, key string) string {
+	if len(m) == 0 {
+		return ""
+	}
+	raw, ok := m[key]
+	if !ok || raw == nil {
+		return ""
+	}
+	if s, ok := raw.(string); ok {
+		return strings.TrimSpace(s)
+	}
+	return strings.TrimSpace(strings.ReplaceAll(strings.Trim(fmt.Sprint(raw), `"`), "\n", " "))
+}
+
+func anyJSONValue(m map[string]any, key string) any {
+	if len(m) == 0 {
+		return nil
+	}
+	return m[key]
+}
+
+func numberValue(m map[string]any, key string) int64 {
+	if len(m) == 0 {
+		return 0
+	}
+	switch n := m[key].(type) {
+	case float64:
+		return int64(n)
+	case float32:
+		return int64(n)
+	case int:
+		return int64(n)
+	case int32:
+		return int64(n)
+	case int64:
+		return n
+	case json.Number:
+		v, err := n.Int64()
+		if err == nil {
+			return v
+		}
+	}
+	return 0
+}
+
+func numberValueAsFloat(m map[string]any, key string, fallback float64) float64 {
+	if len(m) == 0 {
+		return fallback
+	}
+	switch n := m[key].(type) {
+	case float64:
+		return n
+	case float32:
+		return float64(n)
+	case int:
+		return float64(n)
+	case int32:
+		return float64(n)
+	case int64:
+		return float64(n)
+	case json.Number:
+		v, err := n.Float64()
+		if err == nil {
+			return v
+		}
+	}
+	return fallback
+}
+
+func mapString(v any) map[string]string {
+	if v == nil {
+		return nil
+	}
+	switch raw := v.(type) {
+	case map[string]string:
+		return raw
+	case map[string]any:
+		out := make(map[string]string, len(raw))
+		for k, item := range raw {
+			if s, ok := item.(string); ok {
+				out[k] = s
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func mapAny(v any) map[string]any {
+	if v == nil {
+		return nil
+	}
+	if out, ok := v.(map[string]any); ok && len(out) > 0 {
+		return out
+	}
+	return nil
+}
+
+func stringList(v any) []string {
+	switch raw := v.(type) {
+	case nil:
+		return nil
+	case []string:
+		return append([]string(nil), raw...)
+	case []any:
+		out := make([]string, 0, len(raw))
+		for _, item := range raw {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func averageFloat64(values ...float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	total := 0.0
+	for _, v := range values {
+		total += v
+	}
+	return total / float64(len(values))
+}
+
+func firstPositive(values ...int64) int64 {
+	for _, v := range values {
+		if v > 0 {
+			return v
+		}
+	}
+	return 0
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+func inferDiagnosticStepName(stepIndex int, prompt string) string {
+	switch stepIndex {
+	case 1:
+		return "ping"
+	case 2:
+		return "identity"
+	case 3:
+		return "cutoff"
+	case 4:
+		return "identity_free"
+	case 5:
+		return "knowledge_recall"
+	case 6:
+		return "digit_count"
+	default:
+		if strings.Contains(prompt, "ping") {
+			return "ping"
+		}
+		return ""
+	}
 }

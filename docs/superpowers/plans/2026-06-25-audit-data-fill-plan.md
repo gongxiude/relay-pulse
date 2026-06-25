@@ -52,12 +52,12 @@
 
 | 数据链路 | 当前问题 | 影响页面 |
 |---|---|---|
-| `POST /api/audit/diagnostics` 产出的 run 数据 | 已有 runner，但 prompt、步骤、评分都过薄 | 检测方法页、详情页 |
-| `GET /api/audit/diagnostics/:run_id` | `auditDiagnosticResponse` 仍是 `any` | 前端无法稳定渲染 |
-| `GET /api/audit/compare/:run_id` | 只是把 steps 原样返回，没有 baseline 结构 | compare 页无法做真正对照 |
-| baseline 历史窗口 | 没有官方基线快照表，没有近 3 次窗口 | 无法实现相对评分核心 |
-| 25 维 method data | 没有维度分、权重、skip 原因、evidence | 页面只能写说明，不能展示结果 |
-| 首批诊断样本 | 没有为现有启用通道批量生成 run | 用户点进去看到的大多还是空 |
+| `POST /api/audit/diagnostics` 产出的 run 数据 | 已能生成 run/group/dimensions，但仍是单目标手动触发，缺批量回填 | 检测方法页、详情页 |
+| `GET /api/audit/diagnostics/:run_id` | 已结构化，但还缺“最近一次摘要 / 最近一次成功结果”查询口径 | 详情页无法直接显示最近结果 |
+| `GET /api/audit/compare/:run_id` | 已能返回 `group/candidate/baseline/dimensions/steps/summary`，但前端尚未消费 | compare 页、本地详情页 |
+| baseline 历史窗口 | 已有 baseline run 表与分组表，但当前只取最近一次注册基线，未实现近 3 次窗口 | 无法完整对齐 rpdiag v3.24.1 |
+| 25 维 method data | 当前仅实现 6 个 baseline-aware 维度 + 3 个 legacy summary | 页面只能显示第一版结果，不能冒充完整 rpdiag |
+| 首批诊断样本 | 还没有为 enabled targets 批量生成最近结果 | 用户点进去看到的大多还是空 |
 
 ## 4. 当前代码边界
 
@@ -76,49 +76,100 @@
 
 根据 `https://diag.relaypulse.top/about`，rpdiag 核心不是“绝对分”，而是“同一时刻、同一组 prompt、同一抓包条件下，candidate 对 official baseline 的相对差异评分”。
 
-### 5.1 第一版必须落地的评分契约
+### 5.1 当前线上方法论的真实约束
+
+从 `https://diag.relaypulse.top/about` 读取到的当前线上方法论事实如下：
+
+| 项目 | 当前线上事实 |
+|---|---|
+| 页面版本 | `v3.24.1` |
+| 总维度数 | 25 |
+| 总权重 | 188 |
+| 顶层公式 | `overall_score = Σ(weight × dim_score) / Σ(active_weight) × 10` |
+| 对照方式 | 近 3 次官方 baseline 滚动窗口；只有完全没有 eligible 历史 baseline 时才回退到当组单次 baseline |
+| 顶层结论 | 已删除 verdict / cap，前端不输出“真假判定” |
+| 可追溯字段 | `methodology_version`、`weights_hash` |
+
+这些约束意味着 RelayPulse 第一版必须保留同样的契约，即使暂时不能一次补齐全部 25 维。
+
+### 5.2 第一版必须落地的评分契约
 
 | 项目 | 第一版要求 |
 |---|---|
 | 评分类型 | 相对评分，不做绝对真假判定 |
-| baseline | 没有近 3 次窗口时，允许先回退到“同组单次 baseline” |
+| baseline | 当前先支持“最近一次 registered baseline”，第二阶段扩到近 3 次窗口 |
 | 分值输出 | `overall_score = Σ(weight × dim_score) / Σ(active_weight) × 10` |
 | skip 规则 | baseline 缺失、信号不可比时必须 `skip`，不能强打 0 |
 | evidence | 每个维度必须记录 `actual/baseline/result/reason` |
+| 前端边界 | 只显示相对分、维度分和证据，不显示定性 verdict |
 
-### 5.2 第一版可执行维度
+### 5.3 当前线上 25 维权重表
+
+以下权重直接来自 `about` 页当前 HTML，可作为本地 `weights_hash` 和方法页的事实来源：
+
+| 维度 | 权重 |
+|---|---:|
+| `cache_hit_ratio_match` | 20 |
+| `cache_continuity_intra` | 14 |
+| `model_match` | 14 |
+| `cache_sliding_correctness` | 13 |
+| `cache_ttl_consistency` | 15 |
+| `self_identity_consistency` | 8 |
+| `envelope_self_report_match` | 3 |
+| `thinking_present` | 4 |
+| `thinking_volume_match` | 6 |
+| `tier_thinking_volume_match` | 8 |
+| `identity_structured_match` | 7 |
+| `cutoff_match` | 7 |
+| `identity_free_clean` | 7 |
+| `knowledge_recall_match` | 12 |
+| `world_knowledge_tier_match` | 12 |
+| `instruction_following_lang` | 4 |
+| `anthropic_msg_id_format` | 8 |
+| `service_tier_present` | 6 |
+| `inference_geo_present` | 5 |
+| `system_prompt_clean` | 8 |
+| `anthropic_request_id_passthrough` | 4 |
+| `stop_reason_present` | 3 |
+| `sdk_consistency` | 2 |
+| `buffer_dump_match` | 5 |
+| `latency_baseline_match` | 5 |
+
+### 5.4 第一版可执行维度
 
 这些维度可以基于现有 `new-api` 接入方式和当前 runner 补出来：
 
-| 维度 | 数据来源 | 第一版实现方式 |
+| 维度 | 数据来源 | 第一版实现方式 | 当前状态 |
 |---|---|---|
-| `model_match` | 响应体 / usage / envelope | 比较请求模型与响应模型 |
-| `identity_structured_match` | identity step 文本 | 解析 vendor/brand/model 三行 |
-| `identity_free_clean` | identity_free step 文本 | 检测 wrapper 身份词 |
-| `cutoff_match` | cutoff step 文本 + baseline | 比较知识截止月份 |
-| `knowledge_recall_match` | knowledge step 文本 + baseline | 对固定事实题做逐题对照 |
-| `instruction_following_lang` | identity_free step 文本 | 计算 CJK 占比 |
-| `cache_hit_ratio_match` | usage / cache 字段 | 比较 `cache_read / total_input` |
-| `cache_continuity_intra` | 连续步骤 usage | 比较相邻步骤上下文连续性 |
-| `cache_sliding_correctness` | step1-3 usage | 判断 5m sliding 行为 |
-| `cache_ttl_consistency` | usage/raw headers/raw json | 看 5m/1h 字段表面是否出现 |
-| `anthropic_msg_id_format` | 响应 ID | 匹配 `msg_01` 等格式 |
-| `anthropic_request_id_passthrough` | 响应 headers | 看是否透传上游 `req_*` |
-| `service_tier_present` | usage/raw body | 检测 `service_tier` |
-| `inference_geo_present` | raw body | 检测 geo 字段 |
-| `latency_baseline_match` | `ttfb_ms`、`first_text_ms`、`duration_ms` | 与 baseline 中位数比较 |
-| `buffer_dump_match` | raw SSE events | 比较 visible text span 与 chunk 分布 |
+| `model_match` | 响应体 / usage / envelope | 比较请求模型与响应模型 | 已实现 |
+| `identity_structured_match` | identity step 文本 | 解析 vendor/brand/model 三行 | 未实现 |
+| `identity_free_clean` | identity_free step 文本 | 检测 wrapper 身份词 | 已实现 |
+| `cutoff_match` | cutoff step 文本 + baseline | 比较知识截止月份 | 已实现 |
+| `knowledge_recall_match` | knowledge step 文本 + baseline | 对固定事实题做逐题对照 | 已实现 |
+| `instruction_following_lang` | identity_free step 文本 | 计算 CJK 占比 | 已实现 |
+| `cache_hit_ratio_match` | usage / cache 字段 | 比较 `cache_read / total_input` | 未实现 |
+| `cache_continuity_intra` | 连续步骤 usage | 比较相邻步骤上下文连续性 | 未实现 |
+| `cache_sliding_correctness` | step1-3 usage | 判断 5m sliding 行为 | 未实现 |
+| `cache_ttl_consistency` | usage/raw headers/raw json | 看 5m/1h 字段表面是否出现 | 未实现 |
+| `anthropic_msg_id_format` | 响应 ID | 匹配 `msg_01` 等格式 | 未实现 |
+| `anthropic_request_id_passthrough` | 响应 headers | 看是否透传上游 `req_*` | 未实现 |
+| `service_tier_present` | usage/raw body | 检测 `service_tier` | 未实现 |
+| `inference_geo_present` | raw body | 检测 geo 字段 | 未实现 |
+| `latency_baseline_match` | `ttfb_ms`、`first_text_ms`、`duration_ms` | 与 baseline 中位数比较 | 已实现 |
+| `buffer_dump_match` | raw SSE events | 比较 visible text span 与 chunk 分布 | 未实现 |
 
-### 5.3 第二版再做的维度
+当前 runner 还保留了 3 个过渡性 summary 维度：`authenticity_summary`、`protocol_summary`、`streaming_summary`。这些维度可以继续用于过渡展示，但不能在方法页里冒充 rpdiag 官方 25 维。
+
+### 5.5 第二版再做的维度
 
 这些维度第一版不要硬上：
 
 | 维度/能力 | 暂缓原因 |
 |---|---|
-| 近 3 次基线完整滚动窗口 + 版本冻结混算 | 先把单次 baseline 链路跑通 |
-| `thinking_volume_match`、`tier_thinking_volume_match` | 依赖更细的 SSE thinking block 解析 |
-| 完整 25 维全部复刻 | 当前 runner 和本地页面还没有稳定 compare schema |
-| 跨服务统一 scorer | 先把 Anthropic / OpenAI 主要路径做实 |
+| 近 3 次基线完整滚动窗口 + `baseline_window.samples` 披露 | 当前只有最近一次 baseline 查询接口 |
+| `thinking_present`、`thinking_volume_match`、`tier_thinking_volume_match` | 依赖更细的 SSE thinking block 解析 |
+| `world_knowledge_tier_match`、`system_prompt_clean`、`sdk_consistency`、`stop_reason_present` | 需要更细的 request/response envelope 证据 |
+| 跨服务统一 scorer | 先把 Anthropic / OpenAI 主路径做实 |
 
 ## 6. 数据模型补全方案
 
@@ -216,14 +267,15 @@
 **目标**：解决“页面有 schema 但没有数据看”的问题。
 
 **执行项**
-1. 从 `/api/audit/targets` 中筛出 `enabled=true` 的对象。
-2. 第一批只选：
+1. 新增 `POST /api/audit/diagnostics/backfill`，由服务端直接读取已同步的 `audit_targets`。
+2. 从 `enabled=true` 的对象中选首批样本：
    - 每个 `provider + service + channel` 的前 1-3 个主模型
    - 优先 24h 内有生产日志的对象
 3. 生成批量诊断任务：
    - baseline 先跑一轮
    - candidate 再跑一轮
-4. 将结果落库，形成“最近诊断摘要”。
+4. 新增 `GET /api/audit/diagnostics/latest`，支持按 `provider/service/channel/model` 查询最近一次成功结果。
+5. 将结果落库，形成“最近诊断摘要”。
 
 **验收**
 - 首页点进详情页时，至少能看到最近一次真实诊断。
@@ -264,13 +316,13 @@
 
 | 优先级 | 任务 | 原因 |
 |---|---|---|
-| P0 | `diagnostics` / `compare` 结构化 | 没有 schema，前端无法落地 |
-| P0 | baseline 成组执行 | 没有 baseline，就不是 rpdiag 式相对评分 |
+| P0 | 批量回填 + 最近诊断摘要接口 | 没有这两个接口，页面仍然空 |
+| P0 | baseline 成组执行 | 已有雏形，但要让页面能稳定拿到最近结果 |
 | P0 | 首批真实 run 回填 | 没有样本，页面还是空 |
 | P1 | 第一版维度 scorer | 没有维度分，compare 没意义 |
 | P1 | 详情页显示最近诊断摘要 | 用户入口页直接看到结果 |
 | P2 | 检测方法页显示当前版本、权重和覆盖数 | 方法页从“文案页”变成“运行中状态页” |
-| P2 | 基线窗口扩展到近 3 次 | 先单次基线，后窗口 |
+| P2 | 基线窗口扩展到近 3 次 | 先最近一次 baseline，后窗口 |
 
 ## 10. 测试与验收
 
@@ -302,9 +354,10 @@
 2. 扩存储表
 3. 跑通 baseline 组装
 4. 实现第一版维度 scorer
-5. 回填首批 enabled targets 的真实诊断样本
-6. 前端接 compare / diagnostics / methodology 数据
-7. 再做基线窗口和更多维度
+5. 新增最近诊断摘要查询与批量 backfill
+6. 回填首批 enabled targets 的真实诊断样本
+7. 前端接 compare / diagnostics / methodology 数据
+8. 再做基线窗口和更多维度
 
 ## 12. 本计划对应的事实来源
 

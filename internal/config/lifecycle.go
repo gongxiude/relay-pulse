@@ -29,6 +29,12 @@ func (c *AppConfig) applyEnvOverrides() {
 	if envUserID := os.Getenv("NEWAPI_USER_ID"); envUserID != "" {
 		c.NewAPI.UserID = envUserID
 	}
+	if envProbeToken := os.Getenv("NEWAPI_PROBE_ACCESS_TOKEN"); envProbeToken != "" {
+		c.NewAPI.ProbeAccessToken = envProbeToken
+	}
+	if envProbeUserID := os.Getenv("NEWAPI_PROBE_USER_ID"); envProbeUserID != "" {
+		c.NewAPI.ProbeUserID = envProbeUserID
+	}
 
 	// 存储配置环境变量覆盖
 	if envType := os.Getenv("MONITOR_STORAGE_TYPE"); envType != "" {

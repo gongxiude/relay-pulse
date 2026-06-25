@@ -102,6 +102,56 @@ type DiagnosticScore struct {
 	CreatedAt         int64           `json:"created_at"`
 }
 
+type DiagnosticRunGroup struct {
+	GroupID            string `json:"group_id"`
+	CandidateRunID     string `json:"candidate_run_id"`
+	BaselineRunID      string `json:"baseline_run_id"`
+	BaselineMode       string `json:"baseline_mode"`
+	MethodologyVersion string `json:"methodology_version"`
+	WeightsHash        string `json:"weights_hash"`
+	CreatedAt          int64  `json:"created_at"`
+}
+
+type DiagnosticBaselineRun struct {
+	ID                 int64  `json:"id"`
+	BaselineID         string `json:"baseline_id"`
+	Service            string `json:"service"`
+	ModelFamily        string `json:"model_family"`
+	RunID              string `json:"run_id"`
+	Provider           string `json:"provider"`
+	Channel            string `json:"channel"`
+	Source             string `json:"source"`
+	MethodologyVersion string `json:"methodology_version"`
+	CapturedAt         int64  `json:"captured_at"`
+}
+
+type DiagnosticDimension struct {
+	ID              int64           `json:"id"`
+	RunID           string          `json:"run_id"`
+	DimensionKey    string          `json:"dimension_key"`
+	Weight          int             `json:"weight"`
+	Score           float64         `json:"score"`
+	NormalizedScore float64         `json:"normalized_score"`
+	Status          string          `json:"status"`
+	Reason          string          `json:"reason"`
+	Evidence        json.RawMessage `json:"evidence,omitempty"`
+	CreatedAt       int64           `json:"created_at"`
+}
+
+type DiagnosticRunFilter struct {
+	Provider string
+	Service  string
+	Channel  string
+	Model    string
+	Status   string
+	Limit    int
+}
+
+type DiagnosticDimensionSummary struct {
+	RunCount       int `json:"run_count"`
+	DimensionCount int `json:"dimension_count"`
+}
+
 func (s *SQLiteStorage) initAuditTables(ctx context.Context) error {
 	schema := []string{
 		`CREATE TABLE IF NOT EXISTS newapi_channel_snapshots (
@@ -185,6 +235,41 @@ func (s *SQLiteStorage) initAuditTables(ctx context.Context) error {
 			sse_score INTEGER NOT NULL DEFAULT 0,
 			tags TEXT NOT NULL DEFAULT '',
 			created_at INTEGER NOT NULL DEFAULT 0
+		);`,
+		`CREATE TABLE IF NOT EXISTS diagnostic_run_groups (
+			group_id TEXT PRIMARY KEY,
+			candidate_run_id TEXT NOT NULL DEFAULT '',
+			baseline_run_id TEXT NOT NULL DEFAULT '',
+			baseline_mode TEXT NOT NULL DEFAULT '',
+			methodology_version TEXT NOT NULL DEFAULT '',
+			weights_hash TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL DEFAULT 0
+		);`,
+		`CREATE TABLE IF NOT EXISTS diagnostic_baseline_runs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			baseline_id TEXT NOT NULL DEFAULT '',
+			service TEXT NOT NULL DEFAULT '',
+			model_family TEXT NOT NULL DEFAULT '',
+			run_id TEXT NOT NULL DEFAULT '',
+			provider TEXT NOT NULL DEFAULT '',
+			channel TEXT NOT NULL DEFAULT '',
+			source TEXT NOT NULL DEFAULT '',
+			methodology_version TEXT NOT NULL DEFAULT '',
+			captured_at INTEGER NOT NULL DEFAULT 0,
+			UNIQUE(run_id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS diagnostic_dimensions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			run_id TEXT NOT NULL,
+			dimension_key TEXT NOT NULL,
+			weight INTEGER NOT NULL DEFAULT 0,
+			score REAL NOT NULL DEFAULT 0,
+			normalized_score REAL NOT NULL DEFAULT 0,
+			status TEXT NOT NULL DEFAULT '',
+			reason TEXT NOT NULL DEFAULT '',
+			evidence_json TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL DEFAULT 0,
+			UNIQUE(run_id, dimension_key)
 		);`,
 	}
 	for _, stmt := range schema {
@@ -278,6 +363,41 @@ func (s *PostgresStorage) initAuditTables(ctx context.Context) error {
 			sse_score INTEGER NOT NULL DEFAULT 0,
 			tags JSONB NOT NULL DEFAULT '[]'::jsonb,
 			created_at BIGINT NOT NULL DEFAULT 0
+		);`,
+		`CREATE TABLE IF NOT EXISTS diagnostic_run_groups (
+			group_id TEXT PRIMARY KEY,
+			candidate_run_id TEXT NOT NULL DEFAULT '',
+			baseline_run_id TEXT NOT NULL DEFAULT '',
+			baseline_mode TEXT NOT NULL DEFAULT '',
+			methodology_version TEXT NOT NULL DEFAULT '',
+			weights_hash TEXT NOT NULL DEFAULT '',
+			created_at BIGINT NOT NULL DEFAULT 0
+		);`,
+		`CREATE TABLE IF NOT EXISTS diagnostic_baseline_runs (
+			id BIGSERIAL PRIMARY KEY,
+			baseline_id TEXT NOT NULL DEFAULT '',
+			service TEXT NOT NULL DEFAULT '',
+			model_family TEXT NOT NULL DEFAULT '',
+			run_id TEXT NOT NULL DEFAULT '',
+			provider TEXT NOT NULL DEFAULT '',
+			channel TEXT NOT NULL DEFAULT '',
+			source TEXT NOT NULL DEFAULT '',
+			methodology_version TEXT NOT NULL DEFAULT '',
+			captured_at BIGINT NOT NULL DEFAULT 0,
+			UNIQUE(run_id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS diagnostic_dimensions (
+			id BIGSERIAL PRIMARY KEY,
+			run_id TEXT NOT NULL,
+			dimension_key TEXT NOT NULL,
+			weight INTEGER NOT NULL DEFAULT 0,
+			score DOUBLE PRECISION NOT NULL DEFAULT 0,
+			normalized_score DOUBLE PRECISION NOT NULL DEFAULT 0,
+			status TEXT NOT NULL DEFAULT '',
+			reason TEXT NOT NULL DEFAULT '',
+			evidence_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+			created_at BIGINT NOT NULL DEFAULT 0,
+			UNIQUE(run_id, dimension_key)
 		);`,
 	}
 	for _, stmt := range schema {
@@ -565,6 +685,102 @@ func (s *SQLiteStorage) GetDiagnosticRun(runID string) (*DiagnosticRun, error) {
 	return &run, nil
 }
 
+func (s *SQLiteStorage) ListDiagnosticRuns(filter DiagnosticRunFilter) ([]*DiagnosticRun, error) {
+	ctx := s.effectiveCtx()
+	args := make([]any, 0, 6)
+	clauses := make([]string, 0, 5)
+	if strings.TrimSpace(filter.Provider) != "" {
+		clauses = append(clauses, "provider = ?")
+		args = append(args, strings.TrimSpace(filter.Provider))
+	}
+	if strings.TrimSpace(filter.Service) != "" {
+		clauses = append(clauses, "service = ?")
+		args = append(args, strings.TrimSpace(filter.Service))
+	}
+	if strings.TrimSpace(filter.Channel) != "" {
+		clauses = append(clauses, "channel = ?")
+		args = append(args, strings.TrimSpace(filter.Channel))
+	}
+	if strings.TrimSpace(filter.Model) != "" {
+		clauses = append(clauses, "model = ?")
+		args = append(args, strings.TrimSpace(filter.Model))
+	}
+	if strings.TrimSpace(filter.Status) != "" {
+		clauses = append(clauses, "status = ?")
+		args = append(args, strings.TrimSpace(filter.Status))
+	}
+	query := `
+		SELECT run_id, provider, service, channel, model, status, created_at, updated_at, input_json, output_json
+		FROM diagnostic_runs
+	`
+	if len(clauses) > 0 {
+		query += ` WHERE ` + strings.Join(clauses, ` AND `)
+	}
+	query += ` ORDER BY created_at DESC, updated_at DESC, run_id DESC`
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	query += ` LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("查询诊断任务列表失败: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]*DiagnosticRun, 0, limit)
+	for rows.Next() {
+		var (
+			run           DiagnosticRun
+			input, output string
+		)
+		if err := rows.Scan(&run.RunID, &run.Provider, &run.Service, &run.Channel, &run.Model, &run.Status, &run.CreatedAt, &run.UpdatedAt, &input, &output); err != nil {
+			return nil, fmt.Errorf("扫描诊断任务列表失败: %w", err)
+		}
+		if input != "" {
+			run.Input = json.RawMessage(input)
+		}
+		if output != "" {
+			run.Output = json.RawMessage(output)
+		}
+		out = append(out, &run)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("遍历诊断任务列表失败: %w", err)
+	}
+	return out, nil
+}
+
+func (s *SQLiteStorage) CountDiagnosticRuns(status string) (int, error) {
+	ctx := s.effectiveCtx()
+	query := `SELECT COUNT(*) FROM diagnostic_runs`
+	args := make([]any, 0, 1)
+	if strings.TrimSpace(status) != "" {
+		query += ` WHERE status = ?`
+		args = append(args, strings.TrimSpace(status))
+	}
+	var count int
+	if err := s.db.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("统计诊断任务失败: %w", err)
+	}
+	return count, nil
+}
+
+func (s *SQLiteStorage) GetDiagnosticDimensionSummary() (*DiagnosticDimensionSummary, error) {
+	ctx := s.effectiveCtx()
+	var summary DiagnosticDimensionSummary
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(DISTINCT diagnostic_dimensions.run_id), COUNT(*)
+		FROM diagnostic_dimensions
+		INNER JOIN diagnostic_runs ON diagnostic_runs.run_id = diagnostic_dimensions.run_id
+		WHERE diagnostic_runs.status = 'done'
+	`).Scan(&summary.RunCount, &summary.DimensionCount); err != nil {
+		return nil, fmt.Errorf("统计诊断维度失败: %w", err)
+	}
+	return &summary, nil
+}
+
 func (s *SQLiteStorage) SaveDiagnosticStep(step *DiagnosticStep) error {
 	if step == nil {
 		return fmt.Errorf("step is nil")
@@ -672,6 +888,175 @@ func (s *SQLiteStorage) GetDiagnosticScore(runID string) (*DiagnosticScore, erro
 		score.Tags = json.RawMessage(tags)
 	}
 	return &score, nil
+}
+
+func (s *SQLiteStorage) SaveDiagnosticRunGroup(group *DiagnosticRunGroup) error {
+	if group == nil {
+		return fmt.Errorf("group is nil")
+	}
+	ctx := s.effectiveCtx()
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO diagnostic_run_groups (group_id, candidate_run_id, baseline_run_id, baseline_mode, methodology_version, weights_hash, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(group_id) DO UPDATE SET
+			candidate_run_id=excluded.candidate_run_id,
+			baseline_run_id=excluded.baseline_run_id,
+			baseline_mode=excluded.baseline_mode,
+			methodology_version=excluded.methodology_version,
+			weights_hash=excluded.weights_hash,
+			created_at=excluded.created_at
+	`, group.GroupID, group.CandidateRunID, group.BaselineRunID, group.BaselineMode, group.MethodologyVersion, group.WeightsHash, group.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("保存诊断分组失败: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStorage) SaveDiagnosticBaselineRun(baseline *DiagnosticBaselineRun) error {
+	if baseline == nil {
+		return fmt.Errorf("baseline is nil")
+	}
+	ctx := s.effectiveCtx()
+	res, err := s.db.ExecContext(ctx, `
+		INSERT INTO diagnostic_baseline_runs (baseline_id, service, model_family, run_id, provider, channel, source, methodology_version, captured_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(run_id) DO UPDATE SET
+			baseline_id=excluded.baseline_id,
+			service=excluded.service,
+			model_family=excluded.model_family,
+			provider=excluded.provider,
+			channel=excluded.channel,
+			source=excluded.source,
+			methodology_version=excluded.methodology_version,
+			captured_at=excluded.captured_at
+	`, baseline.BaselineID, baseline.Service, baseline.ModelFamily, baseline.RunID, baseline.Provider, baseline.Channel, baseline.Source, baseline.MethodologyVersion, baseline.CapturedAt)
+	if err != nil {
+		return fmt.Errorf("保存 baseline run 失败: %w", err)
+	}
+	id, _ := res.LastInsertId()
+	if id > 0 {
+		baseline.ID = id
+	}
+	return nil
+}
+
+func (s *SQLiteStorage) GetLatestDiagnosticBaselineRun(service, modelFamily, methodologyVersion, excludeRunID string) (*DiagnosticBaselineRun, error) {
+	ctx := s.effectiveCtx()
+	var (
+		baseline DiagnosticBaselineRun
+		args     []any
+	)
+	query := `
+		SELECT id, baseline_id, service, model_family, run_id, provider, channel, source, methodology_version, captured_at
+		FROM diagnostic_baseline_runs
+		WHERE service = ? AND model_family = ? AND methodology_version = ?
+	`
+	args = append(args, service, modelFamily, methodologyVersion)
+	if strings.TrimSpace(excludeRunID) != "" {
+		query += ` AND run_id != ?`
+		args = append(args, excludeRunID)
+	}
+	query += ` ORDER BY captured_at DESC, id DESC LIMIT 1`
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(
+		&baseline.ID,
+		&baseline.BaselineID,
+		&baseline.Service,
+		&baseline.ModelFamily,
+		&baseline.RunID,
+		&baseline.Provider,
+		&baseline.Channel,
+		&baseline.Source,
+		&baseline.MethodologyVersion,
+		&baseline.CapturedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("查询最新 baseline run 失败: %w", err)
+	}
+	return &baseline, nil
+}
+
+func (s *SQLiteStorage) GetDiagnosticRunGroup(groupID string) (*DiagnosticRunGroup, error) {
+	ctx := s.effectiveCtx()
+	var group DiagnosticRunGroup
+	err := s.db.QueryRowContext(ctx, `
+		SELECT group_id, candidate_run_id, baseline_run_id, baseline_mode, methodology_version, weights_hash, created_at
+		FROM diagnostic_run_groups
+		WHERE group_id = ?
+	`, groupID).Scan(&group.GroupID, &group.CandidateRunID, &group.BaselineRunID, &group.BaselineMode, &group.MethodologyVersion, &group.WeightsHash, &group.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("查询诊断分组失败: %w", err)
+	}
+	return &group, nil
+}
+
+func (s *SQLiteStorage) SaveDiagnosticDimension(dimension *DiagnosticDimension) error {
+	if dimension == nil {
+		return fmt.Errorf("dimension is nil")
+	}
+	ctx := s.effectiveCtx()
+	evidence := ""
+	if len(dimension.Evidence) > 0 {
+		evidence = string(dimension.Evidence)
+	}
+	res, err := s.db.ExecContext(ctx, `
+		INSERT INTO diagnostic_dimensions (run_id, dimension_key, weight, score, normalized_score, status, reason, evidence_json, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(run_id, dimension_key) DO UPDATE SET
+			weight=excluded.weight,
+			score=excluded.score,
+			normalized_score=excluded.normalized_score,
+			status=excluded.status,
+			reason=excluded.reason,
+			evidence_json=excluded.evidence_json,
+			created_at=excluded.created_at
+	`, dimension.RunID, dimension.DimensionKey, dimension.Weight, dimension.Score, dimension.NormalizedScore, dimension.Status, dimension.Reason, evidence, dimension.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("保存诊断维度失败: %w", err)
+	}
+	id, _ := res.LastInsertId()
+	if id > 0 {
+		dimension.ID = id
+	}
+	return nil
+}
+
+func (s *SQLiteStorage) ListDiagnosticDimensions(runID string) ([]*DiagnosticDimension, error) {
+	ctx := s.effectiveCtx()
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, run_id, dimension_key, weight, score, normalized_score, status, reason, evidence_json, created_at
+		FROM diagnostic_dimensions
+		WHERE run_id = ?
+		ORDER BY weight DESC, dimension_key ASC, id ASC
+	`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("查询诊断维度失败: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*DiagnosticDimension
+	for rows.Next() {
+		var (
+			dimension DiagnosticDimension
+			evidence  string
+		)
+		if err := rows.Scan(&dimension.ID, &dimension.RunID, &dimension.DimensionKey, &dimension.Weight, &dimension.Score, &dimension.NormalizedScore, &dimension.Status, &dimension.Reason, &evidence, &dimension.CreatedAt); err != nil {
+			return nil, fmt.Errorf("扫描诊断维度失败: %w", err)
+		}
+		if evidence != "" {
+			dimension.Evidence = json.RawMessage(evidence)
+		}
+		out = append(out, &dimension)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("遍历诊断维度失败: %w", err)
+	}
+	return out, nil
 }
 
 func (s *SQLiteStorage) ReplaceAuditTargets(targets []AuditTarget) error {
@@ -997,6 +1382,108 @@ func (s *PostgresStorage) GetDiagnosticRun(runID string) (*DiagnosticRun, error)
 	return &run, nil
 }
 
+func (s *PostgresStorage) ListDiagnosticRuns(filter DiagnosticRunFilter) ([]*DiagnosticRun, error) {
+	ctx := s.effectiveCtx()
+	args := make([]any, 0, 6)
+	clauses := make([]string, 0, 5)
+	argIndex := 1
+	if strings.TrimSpace(filter.Provider) != "" {
+		clauses = append(clauses, fmt.Sprintf("provider = $%d", argIndex))
+		args = append(args, strings.TrimSpace(filter.Provider))
+		argIndex++
+	}
+	if strings.TrimSpace(filter.Service) != "" {
+		clauses = append(clauses, fmt.Sprintf("service = $%d", argIndex))
+		args = append(args, strings.TrimSpace(filter.Service))
+		argIndex++
+	}
+	if strings.TrimSpace(filter.Channel) != "" {
+		clauses = append(clauses, fmt.Sprintf("channel = $%d", argIndex))
+		args = append(args, strings.TrimSpace(filter.Channel))
+		argIndex++
+	}
+	if strings.TrimSpace(filter.Model) != "" {
+		clauses = append(clauses, fmt.Sprintf("model = $%d", argIndex))
+		args = append(args, strings.TrimSpace(filter.Model))
+		argIndex++
+	}
+	if strings.TrimSpace(filter.Status) != "" {
+		clauses = append(clauses, fmt.Sprintf("status = $%d", argIndex))
+		args = append(args, strings.TrimSpace(filter.Status))
+		argIndex++
+	}
+	query := `
+		SELECT run_id, provider, service, channel, model, status, created_at, updated_at, input_json, output_json
+		FROM diagnostic_runs
+	`
+	if len(clauses) > 0 {
+		query += ` WHERE ` + strings.Join(clauses, ` AND `)
+	}
+	query += ` ORDER BY created_at DESC, updated_at DESC, run_id DESC`
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	query += fmt.Sprintf(" LIMIT $%d", argIndex)
+	args = append(args, limit)
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("查询诊断任务列表失败 (PostgreSQL): %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]*DiagnosticRun, 0, limit)
+	for rows.Next() {
+		var (
+			run           DiagnosticRun
+			input, output string
+		)
+		if err := rows.Scan(&run.RunID, &run.Provider, &run.Service, &run.Channel, &run.Model, &run.Status, &run.CreatedAt, &run.UpdatedAt, &input, &output); err != nil {
+			return nil, fmt.Errorf("扫描诊断任务列表失败 (PostgreSQL): %w", err)
+		}
+		if input != "" {
+			run.Input = json.RawMessage(input)
+		}
+		if output != "" {
+			run.Output = json.RawMessage(output)
+		}
+		out = append(out, &run)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("遍历诊断任务列表失败 (PostgreSQL): %w", err)
+	}
+	return out, nil
+}
+
+func (s *PostgresStorage) CountDiagnosticRuns(status string) (int, error) {
+	ctx := s.effectiveCtx()
+	query := `SELECT COUNT(*) FROM diagnostic_runs`
+	args := make([]any, 0, 1)
+	if strings.TrimSpace(status) != "" {
+		query += ` WHERE status = $1`
+		args = append(args, strings.TrimSpace(status))
+	}
+	var count int
+	if err := s.pool.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("统计诊断任务失败 (PostgreSQL): %w", err)
+	}
+	return count, nil
+}
+
+func (s *PostgresStorage) GetDiagnosticDimensionSummary() (*DiagnosticDimensionSummary, error) {
+	ctx := s.effectiveCtx()
+	var summary DiagnosticDimensionSummary
+	if err := s.pool.QueryRow(ctx, `
+		SELECT COUNT(DISTINCT diagnostic_dimensions.run_id), COUNT(*)
+		FROM diagnostic_dimensions
+		INNER JOIN diagnostic_runs ON diagnostic_runs.run_id = diagnostic_dimensions.run_id
+		WHERE diagnostic_runs.status = 'done'
+	`).Scan(&summary.RunCount, &summary.DimensionCount); err != nil {
+		return nil, fmt.Errorf("统计诊断维度失败 (PostgreSQL): %w", err)
+	}
+	return &summary, nil
+}
+
 func (s *PostgresStorage) SaveDiagnosticStep(step *DiagnosticStep) error {
 	if step == nil {
 		return fmt.Errorf("step is nil")
@@ -1100,6 +1587,165 @@ func (s *PostgresStorage) GetDiagnosticScore(runID string) (*DiagnosticScore, er
 		score.Tags = json.RawMessage(tags)
 	}
 	return &score, nil
+}
+
+func (s *PostgresStorage) SaveDiagnosticRunGroup(group *DiagnosticRunGroup) error {
+	if group == nil {
+		return fmt.Errorf("group is nil")
+	}
+	ctx := s.effectiveCtx()
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO diagnostic_run_groups (group_id, candidate_run_id, baseline_run_id, baseline_mode, methodology_version, weights_hash, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)
+		ON CONFLICT(group_id) DO UPDATE SET
+			candidate_run_id=EXCLUDED.candidate_run_id,
+			baseline_run_id=EXCLUDED.baseline_run_id,
+			baseline_mode=EXCLUDED.baseline_mode,
+			methodology_version=EXCLUDED.methodology_version,
+			weights_hash=EXCLUDED.weights_hash,
+			created_at=EXCLUDED.created_at
+	`, group.GroupID, group.CandidateRunID, group.BaselineRunID, group.BaselineMode, group.MethodologyVersion, group.WeightsHash, group.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("保存诊断分组失败 (PostgreSQL): %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStorage) SaveDiagnosticBaselineRun(baseline *DiagnosticBaselineRun) error {
+	if baseline == nil {
+		return fmt.Errorf("baseline is nil")
+	}
+	ctx := s.effectiveCtx()
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO diagnostic_baseline_runs (baseline_id, service, model_family, run_id, provider, channel, source, methodology_version, captured_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		ON CONFLICT(run_id) DO UPDATE SET
+			baseline_id=EXCLUDED.baseline_id,
+			service=EXCLUDED.service,
+			model_family=EXCLUDED.model_family,
+			provider=EXCLUDED.provider,
+			channel=EXCLUDED.channel,
+			source=EXCLUDED.source,
+			methodology_version=EXCLUDED.methodology_version,
+			captured_at=EXCLUDED.captured_at
+		RETURNING id
+	`, baseline.BaselineID, baseline.Service, baseline.ModelFamily, baseline.RunID, baseline.Provider, baseline.Channel, baseline.Source, baseline.MethodologyVersion, baseline.CapturedAt).Scan(&baseline.ID)
+	if err != nil {
+		return fmt.Errorf("保存 baseline run 失败 (PostgreSQL): %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStorage) GetLatestDiagnosticBaselineRun(service, modelFamily, methodologyVersion, excludeRunID string) (*DiagnosticBaselineRun, error) {
+	ctx := s.effectiveCtx()
+	var (
+		baseline DiagnosticBaselineRun
+		args     []any
+	)
+	query := `
+		SELECT id, baseline_id, service, model_family, run_id, provider, channel, source, methodology_version, captured_at
+		FROM diagnostic_baseline_runs
+		WHERE service = $1 AND model_family = $2 AND methodology_version = $3
+	`
+	args = append(args, service, modelFamily, methodologyVersion)
+	argPos := 4
+	if strings.TrimSpace(excludeRunID) != "" {
+		query += fmt.Sprintf(" AND run_id != $%d", argPos)
+		args = append(args, excludeRunID)
+		argPos++
+	}
+	query += ` ORDER BY captured_at DESC, id DESC LIMIT 1`
+	err := s.pool.QueryRow(ctx, query, args...).Scan(
+		&baseline.ID,
+		&baseline.BaselineID,
+		&baseline.Service,
+		&baseline.ModelFamily,
+		&baseline.RunID,
+		&baseline.Provider,
+		&baseline.Channel,
+		&baseline.Source,
+		&baseline.MethodologyVersion,
+		&baseline.CapturedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("查询最新 baseline run 失败 (PostgreSQL): %w", err)
+	}
+	return &baseline, nil
+}
+
+func (s *PostgresStorage) GetDiagnosticRunGroup(groupID string) (*DiagnosticRunGroup, error) {
+	ctx := s.effectiveCtx()
+	var group DiagnosticRunGroup
+	err := s.pool.QueryRow(ctx, `
+		SELECT group_id, candidate_run_id, baseline_run_id, baseline_mode, methodology_version, weights_hash, created_at
+		FROM diagnostic_run_groups
+		WHERE group_id = $1
+	`, groupID).Scan(&group.GroupID, &group.CandidateRunID, &group.BaselineRunID, &group.BaselineMode, &group.MethodologyVersion, &group.WeightsHash, &group.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("查询诊断分组失败 (PostgreSQL): %w", err)
+	}
+	return &group, nil
+}
+
+func (s *PostgresStorage) SaveDiagnosticDimension(dimension *DiagnosticDimension) error {
+	if dimension == nil {
+		return fmt.Errorf("dimension is nil")
+	}
+	ctx := s.effectiveCtx()
+	evidence := []byte("{}")
+	if len(dimension.Evidence) > 0 {
+		evidence = dimension.Evidence
+	}
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO diagnostic_dimensions (run_id, dimension_key, weight, score, normalized_score, status, reason, evidence_json, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		ON CONFLICT(run_id, dimension_key) DO UPDATE SET
+			weight=EXCLUDED.weight,
+			score=EXCLUDED.score,
+			normalized_score=EXCLUDED.normalized_score,
+			status=EXCLUDED.status,
+			reason=EXCLUDED.reason,
+			evidence_json=EXCLUDED.evidence_json,
+			created_at=EXCLUDED.created_at
+		RETURNING id
+	`, dimension.RunID, dimension.DimensionKey, dimension.Weight, dimension.Score, dimension.NormalizedScore, dimension.Status, dimension.Reason, evidence, dimension.CreatedAt).Scan(&dimension.ID)
+	if err != nil {
+		return fmt.Errorf("保存诊断维度失败 (PostgreSQL): %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStorage) ListDiagnosticDimensions(runID string) ([]*DiagnosticDimension, error) {
+	ctx := s.effectiveCtx()
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, run_id, dimension_key, weight, score, normalized_score, status, reason, evidence_json, created_at
+		FROM diagnostic_dimensions
+		WHERE run_id = $1
+		ORDER BY weight DESC, dimension_key ASC, id ASC
+	`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("查询诊断维度失败 (PostgreSQL): %w", err)
+	}
+	defer rows.Close()
+
+	var out []*DiagnosticDimension
+	for rows.Next() {
+		var dimension DiagnosticDimension
+		if err := rows.Scan(&dimension.ID, &dimension.RunID, &dimension.DimensionKey, &dimension.Weight, &dimension.Score, &dimension.NormalizedScore, &dimension.Status, &dimension.Reason, &dimension.Evidence, &dimension.CreatedAt); err != nil {
+			return nil, fmt.Errorf("扫描诊断维度失败 (PostgreSQL): %w", err)
+		}
+		out = append(out, &dimension)
+	}
+	if rows.Err() != nil {
+		return nil, fmt.Errorf("遍历诊断维度失败 (PostgreSQL): %w", rows.Err())
+	}
+	return out, nil
 }
 
 func (s *PostgresStorage) ReplaceAuditTargets(targets []AuditTarget) error {

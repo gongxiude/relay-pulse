@@ -101,9 +101,9 @@ type auditDiagnosticStepResponse struct {
 }
 
 type auditDiagnosticResponse struct {
-	Run   auditDiagnosticRunResponse      `json:"run"`
-	Score *auditDiagnosticScoreResponse   `json:"score,omitempty"`
-	Steps []auditDiagnosticStepResponse   `json:"steps"`
+	Run   auditDiagnosticRunResponse    `json:"run"`
+	Score *auditDiagnosticScoreResponse `json:"score,omitempty"`
+	Steps []auditDiagnosticStepResponse `json:"steps"`
 }
 
 type auditCompareGroupResponse struct {
@@ -116,10 +116,10 @@ type auditCompareGroupResponse struct {
 }
 
 type auditCompareStepResponse struct {
-	StepIndex  int                           `json:"step_index"`
-	StepName   string                        `json:"step_name,omitempty"`
-	Candidate  auditDiagnosticStepResponse   `json:"candidate"`
-	Baseline   *auditDiagnosticStepResponse  `json:"baseline,omitempty"`
+	StepIndex int                          `json:"step_index"`
+	StepName  string                       `json:"step_name,omitempty"`
+	Candidate auditDiagnosticStepResponse  `json:"candidate"`
+	Baseline  *auditDiagnosticStepResponse `json:"baseline,omitempty"`
 }
 
 type auditCompareSummaryResponse struct {
@@ -130,12 +130,28 @@ type auditCompareSummaryResponse struct {
 }
 
 type auditCompareResponse struct {
-	Group      auditCompareGroupResponse     `json:"group"`
-	Candidate  auditDiagnosticResponse       `json:"candidate"`
-	Baseline   *auditDiagnosticResponse      `json:"baseline,omitempty"`
-	Dimensions []any                         `json:"dimensions"`
-	Steps      []auditCompareStepResponse    `json:"steps"`
-	Summary    auditCompareSummaryResponse   `json:"summary"`
+	Group      auditCompareGroupResponse   `json:"group"`
+	Candidate  auditDiagnosticResponse     `json:"candidate"`
+	Baseline   *auditDiagnosticResponse    `json:"baseline,omitempty"`
+	Dimensions []any                       `json:"dimensions"`
+	Steps      []auditCompareStepResponse  `json:"steps"`
+	Summary    auditCompareSummaryResponse `json:"summary"`
+}
+
+type auditDiagnosticLatestItemResponse struct {
+	Run        auditDiagnosticRunResponse    `json:"run"`
+	Score      *auditDiagnosticScoreResponse `json:"score,omitempty"`
+	CompareURL string                        `json:"compare_url,omitempty"`
+}
+
+type auditDiagnosticLatestResponse struct {
+	Items []auditDiagnosticLatestItemResponse `json:"items"`
+	Meta  auditDiagnosticLatestMetaResponse   `json:"meta"`
+}
+
+type auditDiagnosticLatestMetaResponse struct {
+	Limit int `json:"limit"`
+	Count int `json:"count"`
 }
 
 type auditDiagnosticSubmitRequest struct {
@@ -148,4 +164,60 @@ type auditDiagnosticSubmitRequest struct {
 
 type auditDiagnosticSubmitResponse struct {
 	RunID string `json:"run_id"`
+}
+
+type auditDiagnosticBackfillRequest struct {
+	MaxTargets          int `json:"max_targets"`
+	MaxModelsPerChannel int `json:"max_models_per_channel"`
+	LookbackHours       int `json:"lookback_hours"`
+}
+
+type auditDiagnosticBackfillItemResponse struct {
+	Provider string `json:"provider"`
+	Service  string `json:"service"`
+	Channel  string `json:"channel"`
+	Model    string `json:"model"`
+	RunID    string `json:"run_id,omitempty"`
+	Status   string `json:"status"`
+	Error    string `json:"error,omitempty"`
+}
+
+type auditDiagnosticBackfillResponse struct {
+	Selected int                                   `json:"selected"`
+	Started  int                                   `json:"started"`
+	Failed   int                                   `json:"failed"`
+	Items    []auditDiagnosticBackfillItemResponse `json:"items"`
+}
+
+type auditMethodologyDimensionResponse struct {
+	Key         string `json:"key"`
+	Weight      int    `json:"weight"`
+	Group       string `json:"group"`
+	Description string `json:"description"`
+	Implemented bool   `json:"implemented"`
+	Active      bool   `json:"active"`
+	Phase       string `json:"phase"`
+}
+
+type auditMethodologyCoverageResponse struct {
+	DoneRuns          int `json:"done_runs"`
+	DimensionRuns     int `json:"dimension_runs"`
+	DimensionRowCount int `json:"dimension_row_count"`
+}
+
+type auditMethodologySummaryResponse struct {
+	Version           string `json:"version"`
+	WeightsHash       string `json:"weights_hash"`
+	TotalDimensions   int    `json:"total_dimensions"`
+	TotalWeight       int    `json:"total_weight"`
+	ImplementedCount  int    `json:"implemented_count"`
+	ImplementedWeight int    `json:"implemented_weight"`
+	ActiveCount       int    `json:"active_count"`
+	ActiveWeight      int    `json:"active_weight"`
+}
+
+type auditMethodologyResponse struct {
+	Summary    auditMethodologySummaryResponse     `json:"summary"`
+	Coverage   auditMethodologyCoverageResponse    `json:"coverage"`
+	Dimensions []auditMethodologyDimensionResponse `json:"dimensions"`
 }

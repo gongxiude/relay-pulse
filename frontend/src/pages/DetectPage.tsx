@@ -14,8 +14,10 @@ import {
 
 import { Header } from '../components/Header';
 import { LANGUAGE_PATH_MAP, type SupportedLanguage } from '../i18n';
+import { useAuditMethodology } from '../hooks/useAuditMethodology';
 import { useRpdiagScores, lookupRpdiagScore } from '../hooks/useRpdiagScores';
 import { useMonitorData } from '../hooks/useMonitorData';
+import type { AuditMethodologyDimension } from '../types/audit';
 
 /** 质量分色带：与 StatusTable.qualityScoreColor 同一套 hue 阶梯（红→翠绿）。
  *  StatusTable 内为私有函数，这里独立一份避免改动那个组件；阈值变更需两处同步。 */
@@ -191,14 +193,39 @@ function Section({
   );
 }
 
+function MetricCard({ label, value, hint }: { label: string; value: string; hint: string }) {
+  return (
+    <div className="rounded-xl border border-default bg-surface p-4">
+      <div className="text-sm text-muted mb-1">{label}</div>
+      <div className="text-xl font-semibold text-primary break-all">{value}</div>
+      <div className="text-xs text-secondary mt-1 break-all">{hint}</div>
+    </div>
+  );
+}
+
+function DimensionStatusBadge({ dimension }: { dimension: AuditMethodologyDimension }) {
+  if (dimension.active) {
+    return <span className="inline-flex rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-300">已启用</span>;
+  }
+  if (dimension.implemented) {
+    return <span className="inline-flex rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-semibold text-amber-300">已实现未启用</span>;
+  }
+  return <span className="inline-flex rounded-full bg-slate-500/15 px-2.5 py-1 text-xs font-semibold text-slate-300">计划中</span>;
+}
+
 export default function DetectPage() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const langPrefix = LANGUAGE_PATH_MAP[i18n.language as SupportedLanguage];
   const buildPath = (path: string) => (langPrefix ? `/${langPrefix}${path}` : path);
+  const { data: methodology, loading: methodologyLoading, error: methodologyError } = useAuditMethodology();
   const headerStats = useMemo(
-    () => ({ total: 0, healthy: 0, issues: 0 }),
-    [],
+    () => ({
+      total: methodology?.summary.total_dimensions ?? 0,
+      healthy: methodology?.summary.active_count ?? 0,
+      issues: Math.max(0, (methodology?.summary.total_dimensions ?? 0) - (methodology?.summary.active_count ?? 0)),
+    }),
+    [methodology],
   );
 
   const problems = t('detect.what.items', { returnObjects: true }) as Array<{ t: string; d: string }>;
@@ -226,6 +253,61 @@ export default function DetectPage() {
             </h1>
             <p className="text-secondary text-lg leading-relaxed max-w-3xl">{t('detect.hero.lead')}</p>
           </div>
+
+          <Section icon={Fingerprint} title="当前检测方法">
+            {methodologyLoading ? (
+              <div className="rounded-xl border border-default bg-surface p-5 text-sm text-muted">正在加载当前方法版本与样本覆盖情况…</div>
+            ) : methodologyError ? (
+              <div className="rounded-xl border border-danger/30 bg-danger/5 p-5 text-sm text-danger">{methodologyError}</div>
+            ) : methodology ? (
+              <>
+                <div className="grid grid-cols-2 gap-4 md:grid-cols-4 mb-5">
+                  <MetricCard label="当前版本" value={methodology.summary.version} hint={methodology.summary.weights_hash} />
+                  <MetricCard
+                    label="已接入维度"
+                    value={`${methodology.summary.active_count}/${methodology.summary.total_dimensions}`}
+                    hint={`已实现 ${methodology.summary.implemented_count} 维`}
+                  />
+                  <MetricCard
+                    label="当前有效权重"
+                    value={`${methodology.summary.active_weight}/${methodology.summary.total_weight}`}
+                    hint={`已实现权重 ${methodology.summary.implemented_weight}`}
+                  />
+                  <MetricCard
+                    label="样本覆盖"
+                    value={`${methodology.coverage.dimension_runs}`}
+                    hint={`done runs ${methodology.coverage.done_runs} / 维度行 ${methodology.coverage.dimension_row_count}`}
+                  />
+                </div>
+                <div className="rounded-2xl border border-default bg-surface overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-default/60 text-left text-muted">
+                        <th className="px-3 py-3 font-medium">维度</th>
+                        <th className="px-3 py-3 font-medium">分组</th>
+                        <th className="px-3 py-3 font-medium text-right">权重</th>
+                        <th className="px-3 py-3 font-medium">状态</th>
+                        <th className="px-3 py-3 font-medium">说明</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {methodology.dimensions.map((dimension) => (
+                        <tr key={dimension.key} className="border-b border-default/30 align-top last:border-b-0">
+                          <td className="px-3 py-3 font-mono text-primary text-xs sm:text-sm">{dimension.key}</td>
+                          <td className="px-3 py-3 text-secondary">{dimension.group}</td>
+                          <td className="px-3 py-3 text-right font-mono text-primary">{dimension.weight}</td>
+                          <td className="px-3 py-3"><DimensionStatusBadge dimension={dimension} /></td>
+                          <td className="px-3 py-3 text-secondary leading-relaxed">{dimension.description}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : (
+              <div className="rounded-xl border border-default bg-surface p-5 text-sm text-muted">当前还没有可展示的方法数据。</div>
+            )}
+          </Section>
 
           {/* ① 什么是中转站检测 */}
           <Section icon={ShieldQuestion} title={t('detect.what.title')}>

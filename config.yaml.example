@@ -8,6 +8,9 @@
 #   NEWAPI_BASE_URL
 #   NEWAPI_ACCESS_TOKEN
 #   NEWAPI_USER_ID
+# 主动探针如需独立 relay 凭证，可额外提供：
+#   NEWAPI_PROBE_ACCESS_TOKEN
+#   NEWAPI_PROBE_USER_ID
 
 monitors:
   - provider: "88code"
