@@ -919,7 +919,7 @@ function StatusTableComponent({
 
   // 桌面端：表格视图
   return (
-    <div className="overflow-x-auto rounded-2xl border border-default/50 shadow-xl bg-surface/40 backdrop-blur-sm">
+    <div className="overflow-x-auto overflow-y-hidden rounded-2xl border border-default/50 shadow-xl bg-surface/40 backdrop-blur-sm">
       <table className="w-full text-left border-collapse bg-transparent">
         <colgroup>
           {hasAnnotations && <col className="w-px" />}

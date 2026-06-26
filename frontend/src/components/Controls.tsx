@@ -34,6 +34,7 @@ interface ControlsProps {
   refreshCooldown?: boolean; // 刷新冷却中，显示提示
   autoRefresh?: boolean; // 自动刷新开关
   isMobile?: boolean; // 是否为移动端，用于隐藏视图切换按钮
+  embed?: boolean; // 嵌入模式（?embed=1）：隐藏收藏/订阅/板块切换等平台级控件，只留刷新+视图切换
   showFilterDrawer?: boolean; // 移动端筛选抽屉是否显示（由 App 层级控制）
   onFilterDrawerClose?: () => void; // 关闭筛选抽屉回调
   onProviderChange: (providers: string[]) => void;  // 多选回调
@@ -74,6 +75,7 @@ export function Controls({
   refreshCooldown = false,
   autoRefresh = true,
   isMobile = false,
+  embed = false,
   showFilterDrawer = false,
   onFilterDrawerClose,
   onProviderChange,
@@ -188,6 +190,9 @@ export function Controls({
         <div className="flex flex-1 min-w-0 min-[960px]:min-w-max items-center gap-2">
           {/* 操作按钮组（移动端隐藏） */}
           <div className="hidden min-[960px]:flex min-[960px]:order-2 min-[960px]:ml-auto items-center gap-1.5 bg-surface/60 p-1.5 rounded-2xl overflow-visible flex-shrink-0">
+          {/* 收藏 / 订阅 / 板块切换 —— 嵌入模式整组隐藏（中转商外站只保留刷新与视图切换） */}
+          {!embed && (
+            <>
           {/* 收藏 + 订阅按钮组 */}
           <div className="flex items-center h-8 bg-elevated/50 rounded-lg border border-default/50 overflow-hidden">
             {/* 收藏筛选按钮 */}
@@ -240,6 +245,8 @@ export function Controls({
 
           {/* 板块切换（下拉菜单） */}
           <BoardSwitcher board={board} onBoardChange={onBoardChange} enabled={boardsEnabled} boardCounts={boardCounts} />
+            </>
+          )}
 
           {/* 视图切换（仅桌面端显示） */}
           {!isMobile && (
@@ -376,6 +383,9 @@ export function Controls({
             <div className="flex flex-col gap-4">
               {FilterSelects()}
 
+              {/* 收藏 / 板块 / 订阅 —— 嵌入模式整组隐藏 */}
+              {!embed && (
+                <>
               {/* 收藏筛选按钮（移动端） */}
               <button
                 type="button"
@@ -449,6 +459,8 @@ export function Controls({
 
               {/* 订阅通知按钮（移动端） */}
               <SubscribeButton favorites={favorites} className="w-full justify-center py-3" />
+                </>
+              )}
 
               {/* 清空按钮 - 只清空可见的筛选器 */}
               {activeFiltersCount > 0 && (

@@ -433,6 +433,7 @@ export default function ProviderPage() {
           effectiveCategories={[]}  // ProviderPage 不显示分类筛选
           showCategoryFilter={false} // 隐藏分类筛选器
           isMobile={isMobile}
+          embed={isEmbedMode} // 嵌入模式隐藏收藏/订阅/板块切换，只留刷新+视图切换
           showFilterDrawer={showFilterDrawer}
           onFilterDrawerClose={() => setShowFilterDrawer(false)}
           onTimeRangeChange={setTimeRange}
@@ -485,7 +486,7 @@ export default function ProviderPage() {
                   sortConfig={sortConfig}
                   timeRange={timeRange}
                   slowLatencyMs={slowLatencyMs}
-                  enableAnnotations={enableAnnotations}
+                  enableAnnotations={isEmbedMode ? false : enableAnnotations}
                   showCategoryTag={false}
                   showProvider={!isEmbedMode}
                   showSponsor={false}
@@ -509,7 +510,7 @@ export default function ProviderPage() {
                       item={item}
                       timeRange={timeRange}
                       slowLatencyMs={slowLatencyMs}
-                      enableAnnotations={enableAnnotations}
+                      enableAnnotations={isEmbedMode ? false : enableAnnotations}
                       showCategoryTag={false}
                       showProvider={!isEmbedMode}
                       isFavorite={isFavorite}
