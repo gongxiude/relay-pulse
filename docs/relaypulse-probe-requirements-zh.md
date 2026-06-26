@@ -80,6 +80,8 @@ new-api HTTP API
 
 当前同步 channel 不包含 per-channel probe key / api key 字段。第一版不能假定每个 channel 都能自动同步独立探针凭证。
 
+`NEWAPI_PROBE_ACCESS_TOKEN` 只解决“RelayPulse 是否有权限通过 `new-api` relay 发起探测请求”的问题，不决定请求路径、HTTP method、headers 或 body 结构。主动诊断的请求路径和请求体必须由诊断模板提供，不能因为配置了 probe token 就绕过模板直接硬编码调用 `/v1/chat/completions`。
+
 必须同步的渠道字段：
 
 | 字段 | 用途 |
@@ -182,17 +184,20 @@ audit:
     credential_mode: "probe_fallback"
     template_binding:
       default:
-        cc: "cc-sonnet-arith"
-        cx: "cx-codex-arith"
-        gm: "gm-gemini-arith"
+        cc: "cx-gpt-chat-diagnostic"
+        cx: "cx-gpt-chat-diagnostic"
+        gm: "cx-gpt-chat-diagnostic"
+        openai: "cx-gpt-chat-diagnostic"
+        anthropic: "cx-gpt-chat-diagnostic-notemp"
+        gemini: "cx-gpt-chat-diagnostic"
       model_family:
         claude:
-          cc: "cc-sonnet-arith"
+          cc: "cx-gpt-chat-diagnostic"
         gpt:
-          cx: "cx-gpt-chat"
+          cx: "cx-gpt-chat-diagnostic"
       channel_type:
         official_direct:
-          cc: "cc-official-direct"
+          cc: "cx-gpt-chat-diagnostic"
 ```
 
 配置字段：
@@ -210,6 +215,10 @@ audit:
 | `template_binding.model_family` | model family 级覆盖 |
 | `template_binding.channel_type` | channel type / upstream protocol 级覆盖 |
 
+第一版执行路径先使用 `template_binding.default` 完成 service 级模板绑定。当前 `quick-probe-v1` runner 支持 `openai_chat` 请求族，因此绑定的模板必须声明 `request_family`、`override_paths` 和 `response_parser`。OpenAI 兼容通道可使用 `templates/cx-gpt-chat-diagnostic.json`；Anthropic / AWS Bedrock 转 OpenAI 兼容通道必须使用不带 `temperature` 的 `templates/cx-gpt-chat-diagnostic-notemp.json`，否则 `claude-opus-4-8` 会返回 `temperature is deprecated for this model`。普通巡检模板如 `cc-sonnet-arith`、`gm-flash-arith` 可继续用于模板探测补洞，但不能作为 `quick-probe-v1` 的默认诊断模板。
+
+`model_family` 和 `channel_type` 作为配置结构保留，后续用于更细粒度覆盖；未实现覆盖优先级前，不得假定它们已经影响实际探测模板选择。
+
 凭证模式：
 
 | `credential_mode` | 含义 |
@@ -223,6 +232,13 @@ audit:
 ## 8. quick-probe-v1 流程与模板复用
 
 `quick-probe-v1` 负责流程编排，模板体系负责请求骨架。不能把 `quick-probe-v1` 降级成一次模板探活，也不能让普通模板巡检共用 `quick-probe-v1` 的状态机。
+
+职责边界必须固定为：
+
+1. 模板决定怎么请求，包括 URL、HTTP method、headers、body 骨架、协议族和响应解析器。
+2. `NEWAPI_PROBE_ACCESS_TOKEN` 决定是否有权限发起这个模板请求。
+3. `quick-probe-v1` 决定发什么 prompt、执行几步、是否复用会话、如何保存证据。
+4. `quick-probe-v1` 不允许绕过模板直接拼接 `/v1/chat/completions`。
 
 | 层次 | 归属 |
 |---|---|

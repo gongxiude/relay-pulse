@@ -1,0 +1,28 @@
+{
+	"model": "GPT",
+	"request_model": "gpt-4o",
+	"url": "{{BASE_URL}}/v1/chat/completions",
+	"method": "POST",
+	"headers": {
+		"Authorization": "{{API_KEY}}",
+		"Content-Type": "application/json",
+		"Accept": "text/event-stream, application/json"
+	},
+	"body": {
+		"model": "{{MODEL}}",
+		"messages": [],
+		"stream": true
+	},
+	"request_family": "openai_chat",
+	"override_paths": {
+		"messages": "$.messages",
+		"model": "$.model",
+		"stream": "$.stream"
+	},
+	"response_parser": "openai_chat_sse",
+	"probe": {
+		"slow_latency": "5s",
+		"timeout": "60s",
+		"retry": 0
+	}
+}

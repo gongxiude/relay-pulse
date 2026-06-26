@@ -12,6 +12,29 @@
 #   NEWAPI_PROBE_ACCESS_TOKEN
 #   NEWAPI_PROBE_USER_ID
 
+audit:
+  diagnostics:
+    enabled: true
+    methodology: "quick-probe-v1"
+    request_timeout: "60s"
+    step_gap_min: "1m"
+    step_gap_max: "4m"
+    cross_5m_boundary: true
+    baseline_enabled: true
+    # probe_fallback: 优先 NEWAPI_PROBE_*，缺失时回退 NEWAPI_*
+    # probe_only: 只允许 NEWAPI_PROBE_*，缺失则诊断失败
+    # newapi_only: 只使用 NEWAPI_* 同步凭证
+    credential_mode: "probe_fallback"
+    # 模板补洞和 quick-probe 请求骨架复用现有 templates/*.json
+    template_binding:
+      default:
+        cc: "cx-gpt-chat-diagnostic"
+        cx: "cx-gpt-chat-diagnostic"
+        gm: "cx-gpt-chat-diagnostic"
+        openai: "cx-gpt-chat-diagnostic"
+        anthropic: "cx-gpt-chat-diagnostic-notemp"
+        gemini: "cx-gpt-chat-diagnostic"
+
 monitors:
   - provider: "88code"
     service: "cc"              # 服务类型：cc (Claude Code) / cx (Codex) / gm (Gemini)

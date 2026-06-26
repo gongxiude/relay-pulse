@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -29,9 +30,13 @@ func newAuditTestStore(t *testing.T) *storage.SQLiteStorage {
 	return store
 }
 
-func newAuditTestRouter(store *storage.SQLiteStorage, cfg *config.AppConfig) *gin.Engine {
+func newAuditTestRouter(t *testing.T, store *storage.SQLiteStorage, cfg *config.AppConfig) *gin.Engine {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
+	configDir := newAuditTestConfigDir(t)
+	ensureAuditTestDiagnosticConfig(cfg)
 	h := NewHandler(store, cfg, nil)
+	h.SetMonitorStore(config.NewMonitorStore(filepath.Join(configDir, config.MonitorsDirName)))
 	r := gin.New()
 	r.GET("/api/audit/newapi/sync/status", h.GetAuditSyncStatus)
 	r.POST("/api/audit/newapi/sync/channels", h.PostAuditSyncChannels)
@@ -40,12 +45,67 @@ func newAuditTestRouter(store *storage.SQLiteStorage, cfg *config.AppConfig) *gi
 	r.GET("/api/audit/channels", h.GetAuditChannels)
 	r.GET("/api/audit/targets", h.GetAuditTargets)
 	r.GET("/api/audit/ranking", h.GetAuditRanking)
+	r.GET("/api/audit/model-status", h.GetAuditModelStatus)
 	r.GET("/api/audit/methodology", h.GetAuditMethodology)
 	r.GET("/api/audit/diagnostics/latest", h.GetAuditDiagnosticLatest)
 	r.POST("/api/audit/diagnostics/backfill", h.PostAuditDiagnosticBackfill)
+	r.POST("/api/audit/template-probes/backfill", h.PostAuditTemplateProbeBackfill)
 	r.GET("/api/audit/diagnostics/:run_id", h.GetAuditDiagnostic)
 	r.GET("/api/audit/compare/:run_id", h.GetAuditCompare)
 	return r
+}
+
+func newAuditTestConfigDir(t *testing.T) string {
+	t.Helper()
+	configDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(configDir, "templates"), 0o755); err != nil {
+		t.Fatalf("MkdirAll templates: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(configDir, config.MonitorsDirName), 0o755); err != nil {
+		t.Fatalf("MkdirAll monitors.d: %v", err)
+	}
+	template := `{
+		"model": "GPT",
+		"request_model": "gpt-4o",
+		"url": "{{BASE_URL}}/diagnostic/chat",
+		"method": "POST",
+		"headers": {
+			"Authorization": "{{API_KEY}}",
+			"Content-Type": "application/json",
+			"Accept": "text/event-stream, application/json"
+		},
+		"body": {
+			"model": "{{MODEL}}",
+			"messages": [],
+			"stream": true,
+			"temperature": 0
+		},
+		"request_family": "openai_chat",
+		"override_paths": {
+			"messages": "$.messages",
+			"model": "$.model",
+			"stream": "$.stream"
+		},
+		"response_parser": "openai_chat_sse"
+	}`
+	if err := os.WriteFile(filepath.Join(configDir, "templates", "unit-diagnostic.json"), []byte(template), 0o644); err != nil {
+		t.Fatalf("WriteFile template: %v", err)
+	}
+	return configDir
+}
+
+func ensureAuditTestDiagnosticConfig(cfg *config.AppConfig) {
+	if cfg == nil {
+		return
+	}
+	if cfg.Audit.Diagnostics.TemplateBinding.Default == nil {
+		cfg.Audit.Diagnostics.TemplateBinding.Default = map[string]string{}
+	}
+	for _, service := range []string{"cc", "cx", "gm", "openai", "anthropic", "gemini"} {
+		if strings.TrimSpace(cfg.Audit.Diagnostics.TemplateBinding.Default[service]) == "" {
+			cfg.Audit.Diagnostics.TemplateBinding.Default[service] = "unit-diagnostic"
+		}
+	}
 }
 
 func TestAuditSyncEndpointsAndReads(t *testing.T) {
@@ -120,7 +180,7 @@ func TestAuditSyncEndpointsAndReads(t *testing.T) {
 		},
 		DegradedWeight: 0.7,
 	}
-	router := newAuditTestRouter(store, cfg)
+	router := newAuditTestRouter(t, store, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/audit/newapi/sync/channels", nil)
 	rec := httptest.NewRecorder()
@@ -334,7 +394,7 @@ func TestAuditDiagnosticAndCompare(t *testing.T) {
 		t.Fatalf("SaveDiagnosticDimension: %v", err)
 	}
 
-	router := newAuditTestRouter(store, &config.AppConfig{DegradedWeight: 0.7})
+	router := newAuditTestRouter(t, store, &config.AppConfig{DegradedWeight: 0.7})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/audit/diagnostics/run-1", nil)
 	rec := httptest.NewRecorder()
@@ -430,6 +490,9 @@ func TestAuditDiagnosticAndCompare(t *testing.T) {
 	if !latestResp.Data.Items[0].Usable || latestResp.Data.Items[0].FilterReason != "usable" {
 		t.Fatalf("unexpected latest usability payload: %+v", latestResp.Data.Items[0])
 	}
+	if latestResp.Data.Items[0].CompareURL != "/api/audit/compare/run-1" {
+		t.Fatalf("latest usable item should include compare url: %+v", latestResp.Data.Items[0])
+	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/audit/diagnostics/latest?provider=OpenAI&service=cc&channel=101:demo&include_filtered=1&limit=5", nil)
 	rec = httptest.NewRecorder()
@@ -456,6 +519,9 @@ func TestAuditDiagnosticAndCompare(t *testing.T) {
 	if latestWithFilteredResp.Data.Items[0].Run.RunStatusReason == "" {
 		t.Fatalf("expected latest filtered first item to include run status reason: %+v", latestWithFilteredResp.Data.Items[0])
 	}
+	if latestWithFilteredResp.Data.Items[0].CompareURL != "/api/audit/compare/run-bad-terminal" {
+		t.Fatalf("latest filtered first item should include compare url: %+v", latestWithFilteredResp.Data.Items[0])
+	}
 	if latestWithFilteredResp.Data.Items[1].Run.RunID != "run-bad" ||
 		latestWithFilteredResp.Data.Items[1].Usable ||
 		latestWithFilteredResp.Data.Items[1].FilterReason != "failed_auth" ||
@@ -464,6 +530,9 @@ func TestAuditDiagnosticAndCompare(t *testing.T) {
 	}
 	if latestWithFilteredResp.Data.Items[1].Run.RunStatusReason == "" {
 		t.Fatalf("expected latest filtered second item to include run status reason: %+v", latestWithFilteredResp.Data.Items[1])
+	}
+	if latestWithFilteredResp.Data.Items[1].CompareURL != "/api/audit/compare/run-bad" {
+		t.Fatalf("latest filtered second item should include compare url: %+v", latestWithFilteredResp.Data.Items[1])
 	}
 	if latestWithFilteredResp.Data.Items[2].Run.RunID != "run-1" || !latestWithFilteredResp.Data.Items[2].Usable {
 		t.Fatalf("unexpected latest filtered third item: %+v", latestWithFilteredResp.Data.Items[2])
@@ -493,8 +562,104 @@ func TestAuditDiagnosticAndCompare(t *testing.T) {
 		methodologyResp.Data.Coverage.FilteredRuns != 2 {
 		t.Fatalf("unexpected methodology coverage: %+v", methodologyResp.Data.Coverage)
 	}
-	if methodologyResp.Data.Runtime.ProbeCredentialMode != "missing" || methodologyResp.Data.Runtime.ProbeReady {
+	if methodologyResp.Data.Runtime.ProbeCredentialMode != config.ProbeCredentialModeProbeFallback || methodologyResp.Data.Runtime.ProbeReady {
 		t.Fatalf("unexpected methodology runtime: %+v", methodologyResp.Data.Runtime)
+	}
+}
+
+func TestAuditModelStatusSeparatesSources(t *testing.T) {
+	store := newAuditTestStore(t)
+	now := time.Now().Unix()
+	target := storage.AuditTarget{
+		Provider:     "OpenAI",
+		Service:      "cx",
+		Channel:      "101:demo",
+		Model:        "gpt-4o",
+		RequestModel: "gpt-4o",
+		Enabled:      true,
+	}
+	if err := store.ReplaceAuditTargets([]storage.AuditTarget{target}); err != nil {
+		t.Fatalf("ReplaceAuditTargets: %v", err)
+	}
+	if err := store.SaveNewAPILogs([]storage.NewAPILog{{
+		ID:               100,
+		CreatedAt:        now,
+		Type:             2,
+		ModelName:        "gpt-4o",
+		ChannelID:        101,
+		PromptTokens:     10,
+		CompletionTokens: 20,
+		UseTime:          2,
+	}}); err != nil {
+		t.Fatalf("SaveNewAPILogs: %v", err)
+	}
+	if err := store.SaveRecord(&storage.ProbeRecord{
+		Provider:  target.Provider,
+		Service:   target.Service,
+		Channel:   target.Channel,
+		Model:     target.Model,
+		Status:    0,
+		SubStatus: storage.SubStatusAuthError,
+		HttpCode:  401,
+		Latency:   123,
+		Timestamp: now,
+	}); err != nil {
+		t.Fatalf("SaveRecord: %v", err)
+	}
+	run := &storage.DiagnosticRun{
+		RunID:     "run-model-status",
+		Provider:  target.Provider,
+		Service:   target.Service,
+		Channel:   target.Channel,
+		Model:     target.Model,
+		Status:    "failed_auth",
+		CreatedAt: now,
+		UpdatedAt: now,
+		Output:    []byte(`{"run_status":"failed_auth","run_status_reason":"all diagnostic steps returned 401 unauthorized","methodology_version":"quick-probe-v1"}`),
+	}
+	if err := store.SaveDiagnosticRun(run); err != nil {
+		t.Fatalf("SaveDiagnosticRun: %v", err)
+	}
+	if err := store.SaveDiagnosticScore(&storage.DiagnosticScore{
+		RunID:             run.RunID,
+		AuthenticityScore: 0,
+		ProtocolScore:     0,
+		SSEScore:          0,
+		Tags:              []byte(`["request_error"]`),
+		CreatedAt:         now,
+	}); err != nil {
+		t.Fatalf("SaveDiagnosticScore: %v", err)
+	}
+
+	router := newAuditTestRouter(t, store, &config.AppConfig{DegradedWeight: 0.7})
+	req := httptest.NewRequest(http.MethodGet, "/api/audit/model-status?provider=OpenAI&service=cx&channel=101:demo&window=24h", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("model status unexpected: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Success bool                     `json:"success"`
+		Data    auditModelStatusResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal model status: %v", err)
+	}
+	if !resp.Success || len(resp.Data.Items) != 1 {
+		t.Fatalf("unexpected model status payload: %+v", resp)
+	}
+	item := resp.Data.Items[0]
+	if item.Production.Source != "production_logs" || item.Production.Status != "ok" || item.Production.Total != 1 {
+		t.Fatalf("unexpected production status: %+v", item.Production)
+	}
+	if item.TemplateProbe.Source != "template_probe" || item.TemplateProbe.Status != "unavailable" || item.TemplateProbe.SubStatus != "auth_error" {
+		t.Fatalf("unexpected template probe status: %+v", item.TemplateProbe)
+	}
+	if item.QuickProbe.Source != "quick_probe" || item.QuickProbe.Status != "failed_auth" || item.QuickProbe.Usable {
+		t.Fatalf("unexpected quick probe status: %+v", item.QuickProbe)
+	}
+	if item.QuickProbe.CompareURL != "/api/audit/compare/run-model-status" {
+		t.Fatalf("quick probe status should expose compare url even when unusable: %+v", item.QuickProbe)
 	}
 }
 
@@ -517,7 +682,7 @@ func TestAuditDiagnosticSubmit(t *testing.T) {
 			UserID:      "u1",
 		},
 	}
-	router := newAuditTestRouter(store, cfg)
+	router := newAuditTestRouter(t, store, cfg)
 	body := `{"provider":"OpenAI","service":"cc","channel":"101:demo","model":"gpt-4o","request_model":"gpt-4o"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/audit/diagnostics", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -525,6 +690,59 @@ func TestAuditDiagnosticSubmit(t *testing.T) {
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || !containsJSON(rec.Body.String(), `"run_id"`) {
 		t.Fatalf("submit unexpected: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAuditDiagnosticSubmitProbeOnlyRequiresProbeCredential(t *testing.T) {
+	store := newAuditTestStore(t)
+	cfg := &config.AppConfig{
+		NewAPI: config.NewAPIConfig{
+			BaseURL:     "https://newapi.example.com",
+			AccessToken: "sync-token",
+			UserID:      "sync-user",
+		},
+		Audit: config.AuditConfig{
+			Diagnostics: config.DiagnosticsConfig{
+				CredentialMode: config.ProbeCredentialModeProbeOnly,
+			},
+		},
+	}
+	router := newAuditTestRouter(t, store, cfg)
+	body := `{"provider":"OpenAI","service":"cc","channel":"101:demo","model":"gpt-4o","request_model":"gpt-4o"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/audit/diagnostics", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "probe_only") {
+		t.Fatalf("submit should fail with probe_only credential error: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAuditSyncStatusReportsProbeFallbackMode(t *testing.T) {
+	store := newAuditTestStore(t)
+	cfg := &config.AppConfig{
+		NewAPI: config.NewAPIConfig{
+			BaseURL:     "https://newapi.example.com",
+			AccessToken: "sync-token",
+			UserID:      "sync-user",
+		},
+		Audit: config.AuditConfig{
+			Diagnostics: config.DiagnosticsConfig{
+				CredentialMode: config.ProbeCredentialModeProbeFallback,
+			},
+		},
+	}
+	router := newAuditTestRouter(t, store, cfg)
+	req := httptest.NewRequest(http.MethodGet, "/api/audit/newapi/sync/status", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status unexpected: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !containsJSON(rec.Body.String(), `"probe_credential_mode":"probe_fallback"`) ||
+		!containsJSON(rec.Body.String(), `"probe_ready":true`) ||
+		!strings.Contains(rec.Body.String(), "回退使用同步凭证") {
+		t.Fatalf("status should expose probe_fallback runtime warning: %s", rec.Body.String())
 	}
 }
 
@@ -566,7 +784,7 @@ func TestAuditDiagnosticBackfill(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	router := newAuditTestRouter(store, &config.AppConfig{
+	router := newAuditTestRouter(t, store, &config.AppConfig{
 		NewAPI: config.NewAPIConfig{
 			BaseURL:     srv.URL,
 			AccessToken: "token",
@@ -589,6 +807,41 @@ func TestAuditDiagnosticBackfill(t *testing.T) {
 	}
 	if !resp.Success || resp.Data.Selected != 1 || resp.Data.Started != 1 || len(resp.Data.Items) != 1 || resp.Data.Items[0].RunID == "" {
 		t.Fatalf("unexpected backfill payload: %+v", resp)
+	}
+}
+
+func TestAuditTemplateProbeBackfillRequiresInlineProber(t *testing.T) {
+	store := newAuditTestStore(t)
+	if err := store.ReplaceAuditTargets([]storage.AuditTarget{{
+		Provider:     "OpenAI",
+		Service:      "cx",
+		Channel:      "101:demo",
+		Model:        "gpt-4o",
+		RequestModel: "gpt-4o",
+		Enabled:      true,
+	}}); err != nil {
+		t.Fatalf("ReplaceAuditTargets: %v", err)
+	}
+	router := newAuditTestRouter(t, store, &config.AppConfig{
+		NewAPI: config.NewAPIConfig{
+			BaseURL:          "https://newapi.example.com",
+			ProbeAccessToken: "probe-token",
+			ProbeUserID:      "probe-user",
+		},
+		Audit: config.AuditConfig{
+			Diagnostics: config.DiagnosticsConfig{
+				TemplateBinding: config.TemplateBindingConfig{
+					Default: map[string]string{"cx": "cx-unit"},
+				},
+			},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/audit/template-probes/backfill", strings.NewReader(`{"max_targets":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "模板探测器未初始化") {
+		t.Fatalf("template probe backfill should require inline prober: code=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

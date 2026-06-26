@@ -531,7 +531,7 @@ func TestInjectMetaTags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			html, isNotFound := injectMetaTags(indexHTML, tt.path, cfg, true)
+			html, isNotFound := injectMetaTags(indexHTML, tt.path, cfg, true, nil)
 
 			if isNotFound != tt.expectedIsNotFound {
 				t.Errorf("injectMetaTags(%q) isNotFound = %v, want %v", tt.path, isNotFound, tt.expectedIsNotFound)
@@ -609,7 +609,7 @@ func TestInjectNoindexForInvalidPaths(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			html, isNotFound := injectMetaTags(indexHTML, tt.path, cfg, true)
+			html, isNotFound := injectMetaTags(indexHTML, tt.path, cfg, true, nil)
 
 			hasNoindex := strings.Contains(html, `noindex`)
 
@@ -621,6 +621,31 @@ func TestInjectNoindexForInvalidPaths(t *testing.T) {
 				t.Errorf("path=%q: isNotFound=%v, want %v", tt.path, isNotFound, tt.expectNotFound)
 			}
 		})
+	}
+}
+
+func TestInjectMetaTagsUsesAuditProviderLookup(t *testing.T) {
+	cfg := &config.AppConfig{PublicBaseURL: "https://relaypulse.top"}
+	indexHTML := `<!doctype html>
+<html lang="en">
+<head>
+<meta name="description" content="Default">
+<title>Default</title>
+</head>
+<body></body>
+</html>`
+
+	html, isNotFound := injectMetaTags(indexHTML, "/p/yuexin01-team5000-sunday-2133", cfg, true, func(slug string) (string, bool) {
+		if slug == "yuexin01-team5000-sunday-2133" {
+			return "yuexin01-team5000-sunday-2133", true
+		}
+		return "", false
+	})
+	if isNotFound {
+		t.Fatal("expected audit provider lookup to prevent provider 404")
+	}
+	if !strings.Contains(html, "yuexin01-team5000-sunday-2133 服务可用性监测") {
+		t.Fatalf("expected provider meta title, html=%s", html)
 	}
 }
 
@@ -640,7 +665,7 @@ func TestInjectMetaTagsDetectGatedByRpdiag(t *testing.T) {
 	const detectCanonical = `<link rel="canonical" href="https://relaypulse.top/detect">`
 
 	t.Run("rpdiag 启用：注入 detect 专属 canonical，不 noindex", func(t *testing.T) {
-		html, isNotFound := injectMetaTags(indexHTML, "/detect", cfg, true)
+		html, isNotFound := injectMetaTags(indexHTML, "/detect", cfg, true, nil)
 		if isNotFound {
 			t.Fatalf("/detect 启用 rpdiag 不应判 404")
 		}
@@ -653,7 +678,7 @@ func TestInjectMetaTagsDetectGatedByRpdiag(t *testing.T) {
 	})
 
 	t.Run("rpdiag 未启用：noindex 且不注入 detect canonical", func(t *testing.T) {
-		html, isNotFound := injectMetaTags(indexHTML, "/detect", cfg, false)
+		html, isNotFound := injectMetaTags(indexHTML, "/detect", cfg, false, nil)
 		if isNotFound {
 			t.Fatalf("/detect 未启用 rpdiag 应为 noindex 而非 404")
 		}
@@ -666,7 +691,7 @@ func TestInjectMetaTagsDetectGatedByRpdiag(t *testing.T) {
 	})
 
 	t.Run("语言前缀 /en/detect 同样受门控", func(t *testing.T) {
-		html, _ := injectMetaTags(indexHTML, "/en/detect", cfg, false)
+		html, _ := injectMetaTags(indexHTML, "/en/detect", cfg, false, nil)
 		if !strings.Contains(html, "noindex") {
 			t.Errorf("/en/detect 未启用 rpdiag 应注入 noindex")
 		}

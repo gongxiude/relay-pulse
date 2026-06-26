@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"monitor/internal/config"
 	"monitor/internal/storage"
 )
 
@@ -21,7 +22,7 @@ func TestDiagnosticRunner(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Fatalf("method=%s", r.Method)
 		}
-		if r.URL.Path != "/v1/chat/completions" {
+		if r.URL.Path != "/diagnostic/chat" {
 			t.Fatalf("path=%s", r.URL.Path)
 		}
 		if got := r.Header.Get("Authorization"); got != "token" {
@@ -38,6 +39,12 @@ func TestDiagnosticRunner(t *testing.T) {
 		model := payload["model"].(string)
 		if model != "gpt-4o" {
 			t.Fatalf("model=%s", model)
+		}
+		if payload["template_marker"] != "from-template" {
+			t.Fatalf("template marker missing in payload: %+v", payload)
+		}
+		if _, ok := payload["messages"].([]any); !ok {
+			t.Fatalf("messages not injected by diagnostic override: %+v", payload)
 		}
 
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -61,6 +68,20 @@ func TestDiagnosticRunner(t *testing.T) {
 		BaseURL:      srv.URL,
 		AccessToken:  "token",
 		UserID:       "u1",
+		Template: &config.ProbeTemplate{
+			URL:    "{{BASE_URL}}/diagnostic/chat",
+			Method: http.MethodPost,
+			Headers: map[string]string{
+				"Authorization": "{{API_KEY}}",
+				"Content-Type":  "application/json",
+				"Accept":        "text/event-stream, application/json",
+			},
+			BodyRaw:        json.RawMessage(`{"model":"placeholder","messages":[],"stream":false,"template_marker":"from-template"}`),
+			RequestFamily:  "openai_chat",
+			OverridePaths:  map[string]string{"model": "$.model", "messages": "$.messages", "stream": "$.stream"},
+			ResponseParser: "openai_chat_sse",
+		},
+		TemplateName: "unit-diagnostic-template",
 	}
 	run, err := runner.Run(context.Background(), target, store)
 	if err != nil {
@@ -117,6 +138,22 @@ func TestDiagnosticRunner(t *testing.T) {
 	}
 }
 
+func testOpenAIChatDiagnosticTemplate() *config.ProbeTemplate {
+	return &config.ProbeTemplate{
+		URL:    "{{BASE_URL}}/diagnostic/chat",
+		Method: http.MethodPost,
+		Headers: map[string]string{
+			"Authorization": "{{API_KEY}}",
+			"Content-Type":  "application/json",
+			"Accept":        "text/event-stream, application/json",
+		},
+		BodyRaw:        json.RawMessage(`{"model":"placeholder","messages":[],"stream":false}`),
+		RequestFamily:  "openai_chat",
+		OverridePaths:  map[string]string{"model": "$.model", "messages": "$.messages", "stream": "$.stream"},
+		ResponseParser: "openai_chat_sse",
+	}
+}
+
 func TestDiagnosticRunnerUsesRegisteredBaselineForCandidate(t *testing.T) {
 	store := newDiagnosticStore(t)
 	now := time.Unix(1710000100, 0)
@@ -146,6 +183,8 @@ func TestDiagnosticRunnerUsesRegisteredBaselineForCandidate(t *testing.T) {
 		BaseURL:      srv.URL,
 		AccessToken:  "token",
 		UserID:       "u1",
+		Template:     testOpenAIChatDiagnosticTemplate(),
+		TemplateName: "unit-diagnostic-template",
 	}
 	officialRun, err := runner.Run(context.Background(), officialTarget, store)
 	if err != nil {
@@ -164,6 +203,8 @@ func TestDiagnosticRunnerUsesRegisteredBaselineForCandidate(t *testing.T) {
 		BaseURL:      srv.URL,
 		AccessToken:  "token",
 		UserID:       "u1",
+		Template:     testOpenAIChatDiagnosticTemplate(),
+		TemplateName: "unit-diagnostic-template",
 	}
 	candidateRun, err := runner.Run(context.Background(), candidateTarget, store)
 	if err != nil {
@@ -233,6 +274,8 @@ func TestDiagnosticRunnerMarksAll401AsFailedAuth(t *testing.T) {
 		BaseURL:      srv.URL,
 		AccessToken:  "token",
 		UserID:       "u1",
+		Template:     testOpenAIChatDiagnosticTemplate(),
+		TemplateName: "unit-diagnostic-template",
 	}, store)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -286,13 +329,13 @@ func TestBuildDimensionsForRunWithBaselineAwareScorers(t *testing.T) {
 			StepIndex: 1,
 			Prompt:    "ping",
 			ExecutionMeta: mustJSON(map[string]any{
-				"step_name":         "ping",
-				"latency_ms":        180,
-				"ttft_ms":           240,
-				"first_text_ms":     240,
-				"finish_reason":     "stop",
-				"usage":             map[string]any{"service_tier": "standard"},
-				"response_headers":  map[string]any{"request-id": "req_candidate_01"},
+				"step_name":        "ping",
+				"latency_ms":       180,
+				"ttft_ms":          240,
+				"first_text_ms":    240,
+				"finish_reason":    "stop",
+				"usage":            map[string]any{"service_tier": "standard"},
+				"response_headers": map[string]any{"request-id": "req_candidate_01"},
 			}),
 		},
 		{
@@ -335,13 +378,13 @@ func TestBuildDimensionsForRunWithBaselineAwareScorers(t *testing.T) {
 			StepIndex: 1,
 			Prompt:    "ping",
 			ExecutionMeta: mustJSON(map[string]any{
-				"step_name":         "ping",
-				"latency_ms":        90,
-				"ttft_ms":           100,
-				"first_text_ms":     100,
-				"finish_reason":     "stop",
-				"usage":             map[string]any{"service_tier": "standard"},
-				"response_headers":  map[string]any{"request-id": "req_baseline_01"},
+				"step_name":        "ping",
+				"latency_ms":       90,
+				"ttft_ms":          100,
+				"first_text_ms":    100,
+				"finish_reason":    "stop",
+				"usage":            map[string]any{"service_tier": "standard"},
+				"response_headers": map[string]any{"request-id": "req_baseline_01"},
 			}),
 		},
 		{

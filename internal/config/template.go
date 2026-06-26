@@ -17,6 +17,9 @@ type ProbeTemplate struct {
 	Method          string            // HTTP 方法
 	Headers         map[string]string // 请求头，支持占位符
 	BodyRaw         json.RawMessage   // body 原始 JSON 对象
+	RequestFamily   string            // 诊断请求族（可选，如 openai_chat / anthropic_messages）
+	OverridePaths   map[string]string // 诊断运行时允许覆写的 JSON 字段路径
+	ResponseParser  string            // 诊断响应解析器（可选）
 	SuccessContains string            // 响应校验关键字，支持 {{EXPECTED_ANSWER}}
 	SlowLatency     string            // 慢请求阈值（可选，如 "4s"）
 	Timeout         string            // 超时时间（可选，如 "10s"）
@@ -28,13 +31,16 @@ type ProbeTemplate struct {
 
 // probeTemplateFile 是模板 JSON 文件的解析结构
 type probeTemplateFile struct {
-	Model        string            `json:"model"`
-	RequestModel string            `json:"request_model"`
-	URL          string            `json:"url"`
-	Method       string            `json:"method"`
-	Headers      map[string]string `json:"headers"`
-	Body         json.RawMessage   `json:"body"`
-	Response     struct {
+	Model          string            `json:"model"`
+	RequestModel   string            `json:"request_model"`
+	URL            string            `json:"url"`
+	Method         string            `json:"method"`
+	Headers        map[string]string `json:"headers"`
+	Body           json.RawMessage   `json:"body"`
+	RequestFamily  string            `json:"request_family"`
+	OverridePaths  map[string]string `json:"override_paths"`
+	ResponseParser string            `json:"response_parser"`
+	Response       struct {
 		SuccessContains string `json:"success_contains"`
 	} `json:"response"`
 	Probe struct {
@@ -66,6 +72,9 @@ func LoadProbeTemplate(filePath string) (*ProbeTemplate, error) {
 		Method:          strings.TrimSpace(parsed.Method),
 		Headers:         parsed.Headers,
 		BodyRaw:         parsed.Body,
+		RequestFamily:   strings.TrimSpace(parsed.RequestFamily),
+		OverridePaths:   normalizeOverridePaths(parsed.OverridePaths),
+		ResponseParser:  strings.TrimSpace(parsed.ResponseParser),
 		SuccessContains: strings.TrimSpace(parsed.Response.SuccessContains),
 		SlowLatency:     strings.TrimSpace(parsed.Probe.SlowLatency),
 		Timeout:         strings.TrimSpace(parsed.Probe.Timeout),
@@ -78,7 +87,53 @@ func LoadProbeTemplate(filePath string) (*ProbeTemplate, error) {
 	if tmpl.Method == "" {
 		return nil, fmt.Errorf("模板 %s 未配置 method", filePath)
 	}
+	if err := validateDiagnosticTemplateContract(filePath, tmpl); err != nil {
+		return nil, err
+	}
 
 	logger.Info("config", "模板加载完成", "path", filePath)
 	return tmpl, nil
+}
+
+func normalizeOverridePaths(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key != "" || value != "" {
+			out[key] = value
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func validateDiagnosticTemplateContract(filePath string, tmpl *ProbeTemplate) error {
+	hasDiagnosticField := tmpl.RequestFamily != "" || len(tmpl.OverridePaths) > 0 || tmpl.ResponseParser != ""
+	if !hasDiagnosticField {
+		return nil
+	}
+	if tmpl.RequestFamily == "" {
+		return fmt.Errorf("诊断模板 %s 未配置 request_family", filePath)
+	}
+	if len(tmpl.OverridePaths) == 0 {
+		return fmt.Errorf("诊断模板 %s 未配置 override_paths", filePath)
+	}
+	if tmpl.ResponseParser == "" {
+		return fmt.Errorf("诊断模板 %s 未配置 response_parser", filePath)
+	}
+	for name, path := range tmpl.OverridePaths {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("诊断模板 %s override_paths 包含空名称", filePath)
+		}
+		if !strings.HasPrefix(path, "$.") {
+			return fmt.Errorf("诊断模板 %s override_paths.%s 必须使用 $. 开头的 JSON 路径", filePath, name)
+		}
+	}
+	return nil
 }

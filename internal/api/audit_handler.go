@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -46,6 +47,16 @@ type auditDiagnosticStore interface {
 	SaveDiagnosticRunGroup(*storage.DiagnosticRunGroup) error
 	SaveDiagnosticDimension(*storage.DiagnosticDimension) error
 	SaveDiagnosticBaselineRun(*storage.DiagnosticBaselineRun) error
+}
+
+type auditTemplateProbeStore interface {
+	auditReadStore
+	SaveRecord(*storage.ProbeRecord) error
+}
+
+type auditModelStatusStore interface {
+	auditReadStore
+	GetLatest(provider, service, channel, model string) (*storage.ProbeRecord, error)
 }
 
 func (h *Handler) auditStore() (auditReadStore, bool) {
@@ -172,14 +183,18 @@ func (h *Handler) PostAuditDiagnosticSubmit(c *gin.Context) {
 		target.RequestModel = target.Model
 	}
 	h.cfgMu.RLock()
-	if h.config != nil {
-		target.BaseURL = h.config.NewAPI.BaseURL
-		target.AccessToken = firstNonEmptyString(h.config.NewAPI.ProbeAccessToken, h.config.NewAPI.AccessToken)
-		target.UserID = firstNonEmptyString(h.config.NewAPI.ProbeUserID, h.config.NewAPI.UserID)
-	}
+	appCfg := h.config
+	creds, credErr := resolveAuditProbeCredentials(appCfg)
 	h.cfgMu.RUnlock()
-	if strings.TrimSpace(target.BaseURL) == "" {
-		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "new-api 配置缺失")
+	if credErr != nil {
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, credErr.Error())
+		return
+	}
+	target.BaseURL = creds.BaseURL
+	target.AccessToken = creds.AccessToken
+	target.UserID = creds.UserID
+	if err := attachAuditDiagnosticTemplate(appCfg, h.configDir(), &target); err != nil {
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, err.Error())
 		return
 	}
 	runner := audit.NewDiagnosticRunner(nil)
@@ -255,6 +270,46 @@ func (h *Handler) GetAuditRanking(c *gin.Context) {
 	}
 	rows := buildAuditRankingRows(targets, logs, window, time.Now())
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": rows})
+}
+
+func (h *Handler) GetAuditModelStatus(c *gin.Context) {
+	store, ok := h.storage.(auditModelStatusStore)
+	if !ok {
+		apiError(c, http.StatusNotImplemented, ErrCodeInternalError, "当前存储不支持审计模型状态接口")
+		return
+	}
+	window := normalizeAuditWindow(c.DefaultQuery("window", "24h"))
+	targets, err := store.ListAuditTargets()
+	if err != nil {
+		apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+		return
+	}
+	targets = filterAuditTargets(targets,
+		strings.TrimSpace(c.Query("provider")),
+		strings.TrimSpace(c.Query("service")),
+		strings.TrimSpace(c.Query("channel")),
+		strings.TrimSpace(c.Query("model")),
+	)
+	logs, err := store.ListNewAPILogsSince(time.Now().Add(-windowDuration(window)).Unix())
+	if err != nil {
+		apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+		return
+	}
+	items, err := buildAuditModelStatusItems(store, targets, logs, window, time.Now())
+	if err != nil {
+		apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": auditModelStatusResponse{
+			Items: items,
+			Meta: auditModelStatusMetaResponse{
+				Window: window,
+				Count:  len(items),
+			},
+		},
+	})
 }
 
 func (h *Handler) GetAuditDiagnostic(c *gin.Context) {
@@ -421,9 +476,7 @@ func (h *Handler) GetAuditDiagnosticLatest(c *gin.Context) {
 		if !usable && strings.TrimSpace(item.Run.RunStatusReason) == "" {
 			item.Run.RunStatusReason = summarizeDiagnosticFailureReason(classifiedSteps, filterReason)
 		}
-		if usable {
-			item.CompareURL = "/api/audit/compare/" + run.RunID
-		}
+		item.CompareURL = "/api/audit/compare/" + run.RunID
 		items = append(items, item)
 		if len(items) >= limit {
 			break
@@ -547,51 +600,116 @@ func containsString(items []string, target string) bool {
 }
 
 func buildAuditProbeRuntime(cfg *config.AppConfig) auditProbeRuntimeResponse {
-	if cfg == nil {
-		return auditProbeRuntimeResponse{
-			ProbeCredentialMode: "missing",
-			ProbeReady:          false,
-			Warning:             "new-api 配置缺失，无法执行主动诊断。",
+	creds, err := resolveAuditProbeCredentials(cfg)
+	if err != nil {
+		mode := "missing"
+		authConfigured := false
+		userConfigured := false
+		if cfg != nil {
+			mode = normalizedAuditCredentialMode(cfg)
+			authConfigured = strings.TrimSpace(cfg.NewAPI.ProbeAccessToken) != "" || strings.TrimSpace(cfg.NewAPI.AccessToken) != ""
+			userConfigured = strings.TrimSpace(cfg.NewAPI.ProbeUserID) != "" || strings.TrimSpace(cfg.NewAPI.UserID) != ""
 		}
+		return auditProbeRuntimeResponse{
+			ProbeCredentialMode: mode,
+			ProbeAuthConfigured: authConfigured,
+			ProbeUserConfigured: userConfigured,
+			ProbeReady:          false,
+			Warning:             err.Error(),
+		}
+	}
+	return auditProbeRuntimeResponse{
+		ProbeCredentialMode: creds.Mode,
+		ProbeAuthConfigured: strings.TrimSpace(creds.AccessToken) != "",
+		ProbeUserConfigured: strings.TrimSpace(creds.UserID) != "",
+		ProbeReady:          true,
+		Warning:             creds.Warning,
+	}
+}
+
+type auditProbeCredentials struct {
+	BaseURL     string
+	AccessToken string
+	UserID      string
+	Mode        string
+	Warning     string
+}
+
+func normalizedAuditCredentialMode(cfg *config.AppConfig) string {
+	if cfg == nil {
+		return "missing"
+	}
+	mode := strings.TrimSpace(cfg.Audit.Diagnostics.CredentialMode)
+	if mode == "" {
+		return config.ProbeCredentialModeProbeFallback
+	}
+	return mode
+}
+
+func resolveAuditProbeCredentials(cfg *config.AppConfig) (auditProbeCredentials, error) {
+	if cfg == nil {
+		return auditProbeCredentials{Mode: "missing"}, fmt.Errorf("new-api 配置缺失，无法执行主动诊断")
+	}
+	if !cfg.Audit.Diagnostics.IsEnabled() {
+		return auditProbeCredentials{Mode: normalizedAuditCredentialMode(cfg)}, fmt.Errorf("主动诊断已通过 audit.diagnostics.enabled 关闭")
+	}
+	baseURL := strings.TrimSpace(cfg.NewAPI.BaseURL)
+	if baseURL == "" {
+		return auditProbeCredentials{Mode: normalizedAuditCredentialMode(cfg)}, fmt.Errorf("NEWAPI_BASE_URL 未配置，无法执行主动诊断")
 	}
 	probeToken := strings.TrimSpace(cfg.NewAPI.ProbeAccessToken)
 	probeUser := strings.TrimSpace(cfg.NewAPI.ProbeUserID)
 	syncToken := strings.TrimSpace(cfg.NewAPI.AccessToken)
 	syncUser := strings.TrimSpace(cfg.NewAPI.UserID)
+	mode := normalizedAuditCredentialMode(cfg)
 
-	mode := "missing"
-	authConfigured := false
-	userConfigured := false
-	probeReady := false
-	warning := ""
-
-	switch {
-	case probeToken != "" && probeUser != "":
-		mode = "dedicated"
-		authConfigured = true
-		userConfigured = true
-		probeReady = true
-	case syncToken != "" && syncUser != "":
-		mode = "sync_fallback"
-		authConfigured = true
-		userConfigured = true
-		probeReady = true
-		warning = "当前未配置独立主动探针凭证，诊断会回退使用同步凭证；若 /v1/chat/completions 需要单独 token，方法页与详情页会持续没有有效样本。"
+	switch mode {
+	case config.ProbeCredentialModeProbeOnly:
+		if probeToken == "" || probeUser == "" {
+			return auditProbeCredentials{BaseURL: baseURL, Mode: mode}, fmt.Errorf("audit.diagnostics.credential_mode=probe_only，但 NEWAPI_PROBE_ACCESS_TOKEN 或 NEWAPI_PROBE_USER_ID 未配置完整")
+		}
+		return auditProbeCredentials{BaseURL: baseURL, AccessToken: probeToken, UserID: probeUser, Mode: mode}, nil
+	case config.ProbeCredentialModeNewAPIOnly:
+		if syncToken == "" || syncUser == "" {
+			return auditProbeCredentials{BaseURL: baseURL, Mode: mode}, fmt.Errorf("audit.diagnostics.credential_mode=newapi_only，但 NEWAPI_ACCESS_TOKEN 或 NEWAPI_USER_ID 未配置完整")
+		}
+		return auditProbeCredentials{BaseURL: baseURL, AccessToken: syncToken, UserID: syncUser, Mode: mode}, nil
+	case config.ProbeCredentialModeProbeFallback:
+		if probeToken != "" && probeUser != "" {
+			return auditProbeCredentials{BaseURL: baseURL, AccessToken: probeToken, UserID: probeUser, Mode: mode}, nil
+		}
+		if syncToken != "" && syncUser != "" {
+			warning := "当前未配置完整独立主动探针凭证，诊断会按 probe_fallback 回退使用同步凭证；模板决定请求路径和请求体，probe token 只决定是否有权限发送该模板请求。"
+			return auditProbeCredentials{BaseURL: baseURL, AccessToken: syncToken, UserID: syncUser, Mode: mode, Warning: warning}, nil
+		}
+		return auditProbeCredentials{BaseURL: baseURL, Mode: mode}, fmt.Errorf("主动探针凭证未配置完整，当前只能同步渠道与日志，无法产出有效诊断样本")
 	default:
-		mode = "missing"
-		authConfigured = probeToken != "" || syncToken != ""
-		userConfigured = probeUser != "" || syncUser != ""
-		probeReady = false
-		warning = "主动探针凭证未配置完整，当前只能同步渠道与日志，无法产出有效诊断样本。"
+		return auditProbeCredentials{BaseURL: baseURL, Mode: mode}, fmt.Errorf("audit.diagnostics.credential_mode 无效: %s", mode)
 	}
+}
 
-	return auditProbeRuntimeResponse{
-		ProbeCredentialMode: mode,
-		ProbeAuthConfigured: authConfigured,
-		ProbeUserConfigured: userConfigured,
-		ProbeReady:          probeReady,
-		Warning:             warning,
+func attachAuditDiagnosticTemplate(cfg *config.AppConfig, configDir string, target *audit.DiagnosticTarget) error {
+	if target == nil {
+		return fmt.Errorf("diagnostic target is nil")
 	}
+	if strings.TrimSpace(configDir) == "" {
+		return fmt.Errorf("配置目录不可用，无法加载 diagnostic template")
+	}
+	templateName, err := audit.ResolveTemplateProbeName(cfg, target.Service, "")
+	if err != nil {
+		return err
+	}
+	templatePath := filepath.Join(configDir, "templates", templateName+".json")
+	tmpl, err := config.LoadProbeTemplate(templatePath)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(tmpl.RequestFamily) == "" || len(tmpl.OverridePaths) == 0 || strings.TrimSpace(tmpl.ResponseParser) == "" {
+		return fmt.Errorf("模板 %s 未声明完整 diagnostic 契约", templateName)
+	}
+	target.TemplateName = templateName
+	target.Template = tmpl
+	return nil
 }
 
 func (h *Handler) PostAuditDiagnosticBackfill(c *gin.Context) {
@@ -649,15 +767,28 @@ func (h *Handler) PostAuditDiagnosticBackfill(c *gin.Context) {
 			runTarget.RequestModel = runTarget.Model
 		}
 		h.cfgMu.RLock()
-		if h.config != nil {
-			runTarget.BaseURL = h.config.NewAPI.BaseURL
-			runTarget.AccessToken = firstNonEmptyString(h.config.NewAPI.ProbeAccessToken, h.config.NewAPI.AccessToken)
-			runTarget.UserID = firstNonEmptyString(h.config.NewAPI.ProbeUserID, h.config.NewAPI.UserID)
-		}
+		appCfg := h.config
+		creds, credErr := resolveAuditProbeCredentials(appCfg)
 		h.cfgMu.RUnlock()
-		if strings.TrimSpace(runTarget.BaseURL) == "" {
-			apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "new-api 配置缺失")
+		if credErr != nil {
+			apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, credErr.Error())
 			return
+		}
+		runTarget.BaseURL = creds.BaseURL
+		runTarget.AccessToken = creds.AccessToken
+		runTarget.UserID = creds.UserID
+		if err := attachAuditDiagnosticTemplate(appCfg, h.configDir(), &runTarget); err != nil {
+			item := auditDiagnosticBackfillItemResponse{
+				Provider: runTarget.Provider,
+				Service:  runTarget.Service,
+				Channel:  runTarget.Channel,
+				Model:    runTarget.Model,
+				Status:   "failed",
+				Error:    err.Error(),
+			}
+			failed++
+			items = append(items, item)
+			continue
 		}
 		run, err := runner.Run(c.Request.Context(), runTarget, store)
 		item := auditDiagnosticBackfillItemResponse{
@@ -686,6 +817,137 @@ func (h *Handler) PostAuditDiagnosticBackfill(c *gin.Context) {
 			Items:    items,
 		},
 	})
+}
+
+func (h *Handler) PostAuditTemplateProbeBackfill(c *gin.Context) {
+	store, ok := h.storage.(auditTemplateProbeStore)
+	if !ok {
+		apiError(c, http.StatusNotImplemented, ErrCodeInternalError, "当前存储不支持模板探测补洞")
+		return
+	}
+	if h.inlineProber == nil {
+		apiError(c, http.StatusServiceUnavailable, ErrCodeInternalError, "模板探测器未初始化")
+		return
+	}
+	var req auditTemplateProbeBackfillRequest
+	if c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&req); err != nil && err.Error() != "EOF" {
+			apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "请求参数错误")
+			return
+		}
+	}
+	if req.MaxTargets <= 0 {
+		req.MaxTargets = 12
+	}
+	if req.MaxTargets > 50 {
+		req.MaxTargets = 50
+	}
+	configDir := h.configDir()
+	if strings.TrimSpace(configDir) == "" {
+		apiError(c, http.StatusInternalServerError, ErrCodeInternalError, "配置目录不可用，无法加载 templates")
+		return
+	}
+	h.cfgMu.RLock()
+	appCfg := h.config
+	creds, credErr := resolveAuditProbeCredentials(h.config)
+	h.cfgMu.RUnlock()
+	if credErr != nil {
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, credErr.Error())
+		return
+	}
+	targets, err := store.ListAuditTargets()
+	if err != nil {
+		apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+		return
+	}
+	selected := selectAuditTemplateProbeTargets(targets, req.MaxTargets)
+	items := make([]auditTemplateProbeBackfillItemResponse, 0, len(selected))
+	probed := 0
+	failed := 0
+	for _, target := range selected {
+		item := auditTemplateProbeBackfillItemResponse{
+			Provider: strings.TrimSpace(target.Provider),
+			Service:  strings.TrimSpace(target.Service),
+			Channel:  strings.TrimSpace(target.Channel),
+			Model:    strings.TrimSpace(target.Model),
+		}
+		templateName, err := audit.ResolveTemplateProbeName(appCfg, target.Service, req.TemplateName)
+		if err != nil {
+			item.Status = "failed"
+			item.Error = err.Error()
+			failed++
+			items = append(items, item)
+			continue
+		}
+		item.Template = templateName
+		probeCfg, err := audit.BuildTemplateProbeConfig(appCfg, target, audit.TemplateProbeCredentials{
+			BaseURL:     creds.BaseURL,
+			AccessToken: creds.AccessToken,
+			UserID:      creds.UserID,
+		}, templateName, configDir)
+		if err != nil {
+			item.Status = "failed"
+			item.Error = err.Error()
+			failed++
+			items = append(items, item)
+			continue
+		}
+		result := h.inlineProber.ProbeConfig(c.Request.Context(), probeCfg)
+		record, err := audit.ProbeRecordFromTemplateProbeResult(target, result, time.Now())
+		if err != nil {
+			item.Status = "failed"
+			item.Error = err.Error()
+			failed++
+			items = append(items, item)
+			continue
+		}
+		if err := store.SaveRecord(record); err != nil {
+			item.Status = "failed"
+			item.Error = err.Error()
+			failed++
+			items = append(items, item)
+			continue
+		}
+		item.Status = "probed"
+		item.ProbeStatus = record.Status
+		item.SubStatus = string(record.SubStatus)
+		item.HTTPCode = record.HttpCode
+		item.Latency = record.Latency
+		probed++
+		items = append(items, item)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": auditTemplateProbeBackfillResponse{
+			Selected: len(selected),
+			Probed:   probed,
+			Failed:   failed,
+			Items:    items,
+		},
+	})
+}
+
+func selectAuditTemplateProbeTargets(targets []storage.AuditTarget, maxTargets int) []storage.AuditTarget {
+	if maxTargets <= 0 {
+		return nil
+	}
+	out := make([]storage.AuditTarget, 0, maxTargets)
+	for _, target := range targets {
+		if !target.Enabled {
+			continue
+		}
+		if strings.TrimSpace(target.Provider) == "" ||
+			strings.TrimSpace(target.Service) == "" ||
+			strings.TrimSpace(target.Channel) == "" ||
+			strings.TrimSpace(target.Model) == "" {
+			continue
+		}
+		out = append(out, target)
+		if len(out) >= maxTargets {
+			break
+		}
+	}
+	return out
 }
 
 func (h *Handler) writeAuditDiagnostic(c *gin.Context, includeCompare bool) {
@@ -1096,6 +1358,189 @@ func buildAuditRankingRows(targets []storage.AuditTarget, logs []storage.NewAPIL
 		return rows[i].Model < rows[j].Model
 	})
 	return rows
+}
+
+func buildAuditModelStatusItems(store auditModelStatusStore, targets []storage.AuditTarget, logs []storage.NewAPILog, window string, now time.Time) ([]auditModelStatusItemResponse, error) {
+	logMap := make(map[string][]audit.LogSpec)
+	logUpdatedAt := make(map[string]int64)
+	for _, log := range logs {
+		key := strconv.FormatInt(log.ChannelID, 10) + "|" + strings.TrimSpace(log.ModelName)
+		logMap[key] = append(logMap[key], audit.LogSpec{
+			ID:               int(log.ID),
+			CreatedAt:        log.CreatedAt,
+			Type:             log.Type,
+			ModelName:        log.ModelName,
+			Quota:            log.Quota,
+			PromptTokens:     log.PromptTokens,
+			CompletionTokens: log.CompletionTokens,
+			UseTime:          log.UseTime,
+			IsStream:         log.IsStream,
+			Channel:          int(log.ChannelID),
+			Group:            log.Group,
+			Other:            log.Other,
+		})
+		if log.CreatedAt > logUpdatedAt[key] {
+			logUpdatedAt[key] = log.CreatedAt
+		}
+	}
+	items := make([]auditModelStatusItemResponse, 0, len(targets))
+	for _, target := range targets {
+		channelID := extractChannelID(target.Channel)
+		modelKey := strings.TrimSpace(target.RequestModel)
+		if modelKey == "" {
+			modelKey = strings.TrimSpace(target.Model)
+		}
+		logKey := channelID + "|" + modelKey
+		production := buildAuditProductionStatus(logMap[logKey], window, now, logUpdatedAt[logKey])
+		templateProbe, err := buildAuditTemplateProbeStatus(store, target)
+		if err != nil {
+			return nil, err
+		}
+		quickProbe, err := buildAuditQuickProbeStatus(store, target)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, auditModelStatusItemResponse{
+			Provider:      target.Provider,
+			Service:       target.Service,
+			Channel:       target.Channel,
+			Model:         target.Model,
+			RequestModel:  target.RequestModel,
+			Enabled:       target.Enabled,
+			Production:    production,
+			TemplateProbe: templateProbe,
+			QuickProbe:    quickProbe,
+		})
+	}
+	return items, nil
+}
+
+func buildAuditProductionStatus(logs []audit.LogSpec, window string, now time.Time, updatedAt int64) auditProductionStatusResponse {
+	metrics := audit.AggregateProductionMetrics(logs, now).Windows[window]
+	status := "no_data"
+	successRate := 0.0
+	if metrics.Total > 0 {
+		successRate = float64(metrics.Success) / float64(metrics.Total) * 100
+		switch {
+		case metrics.Error == 0:
+			status = "ok"
+		case metrics.Success > 0:
+			status = "degraded"
+		default:
+			status = "error"
+		}
+	}
+	return auditProductionStatusResponse{
+		Source:      "production_logs",
+		Status:      status,
+		Total:       metrics.Total,
+		Success:     metrics.Success,
+		Error:       metrics.Error,
+		Timeout:     metrics.Timeout,
+		SuccessRate: successRate,
+		P95:         metrics.P95,
+		P99:         metrics.P99,
+		UpdatedAt:   updatedAt,
+	}
+}
+
+func buildAuditTemplateProbeStatus(store auditModelStatusStore, target storage.AuditTarget) (auditTemplateProbeStatusResponse, error) {
+	record, err := store.GetLatest(target.Provider, target.Service, target.Channel, target.Model)
+	if err != nil {
+		return auditTemplateProbeStatusResponse{}, err
+	}
+	if record == nil {
+		return auditTemplateProbeStatusResponse{Source: "template_probe", Status: "missing"}, nil
+	}
+	status := "unavailable"
+	switch record.Status {
+	case 1:
+		status = "available"
+	case 2:
+		status = "degraded"
+	}
+	return auditTemplateProbeStatusResponse{
+		Source:    "template_probe",
+		Status:    status,
+		SubStatus: string(record.SubStatus),
+		HTTPCode:  record.HttpCode,
+		Latency:   record.Latency,
+		UpdatedAt: record.Timestamp,
+		Error:     record.ErrorDetail,
+	}, nil
+}
+
+func buildAuditQuickProbeStatus(store auditModelStatusStore, target storage.AuditTarget) (auditQuickProbeStatusResponse, error) {
+	runs, err := store.ListDiagnosticRuns(storage.DiagnosticRunFilter{
+		Provider: target.Provider,
+		Service:  target.Service,
+		Channel:  target.Channel,
+		Model:    target.Model,
+		Limit:    5,
+	})
+	if err != nil {
+		return auditQuickProbeStatusResponse{}, err
+	}
+	if len(runs) == 0 {
+		return auditQuickProbeStatusResponse{Source: "quick_probe", Status: "missing"}, nil
+	}
+	run := runs[0]
+	score, err := store.GetDiagnosticScore(run.RunID)
+	if err != nil {
+		return auditQuickProbeStatusResponse{}, err
+	}
+	usable, reason, classifiedSteps, err := classifyDiagnosticRun(store, run, score)
+	if err != nil {
+		return auditQuickProbeStatusResponse{}, err
+	}
+	runResp := buildAuditDiagnosticRun(run)
+	status := runResp.RunStatus
+	if status == "" {
+		status = run.Status
+	}
+	if usable {
+		status = "done"
+		reason = "usable"
+	} else if reason != "" {
+		status = reason
+	}
+	if !usable && runResp.RunStatusReason == "" {
+		runResp.RunStatusReason = summarizeDiagnosticFailureReason(classifiedSteps, reason)
+	}
+	resp := auditQuickProbeStatusResponse{
+		Source:      "quick_probe",
+		Status:      status,
+		RunID:       run.RunID,
+		Usable:      usable,
+		Reason:      firstNonEmptyString(runResp.RunStatusReason, reason),
+		UpdatedAt:   run.UpdatedAt,
+		Methodology: runResp.MethodologyVersion,
+	}
+	resp.CompareURL = "/api/audit/compare/" + run.RunID
+	if scoreResp := buildAuditDiagnosticScore(run, score); scoreResp != nil {
+		resp.Score = scoreResp.OverallScore
+	}
+	return resp, nil
+}
+
+func filterAuditTargets(targets []storage.AuditTarget, provider, service, channel, model string) []storage.AuditTarget {
+	out := make([]storage.AuditTarget, 0, len(targets))
+	for _, target := range targets {
+		if provider != "" && target.Provider != provider {
+			continue
+		}
+		if service != "" && target.Service != service {
+			continue
+		}
+		if channel != "" && target.Channel != channel {
+			continue
+		}
+		if model != "" && target.Model != model {
+			continue
+		}
+		out = append(out, target)
+	}
+	return out
 }
 
 func selectAuditBackfillTargets(targets []storage.AuditTarget, logs []storage.NewAPILog, maxTargets, maxModelsPerChannel int) []storage.AuditTarget {

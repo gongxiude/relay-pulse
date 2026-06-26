@@ -2,7 +2,6 @@ package audit
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"monitor/internal/config"
 	"monitor/internal/storage"
 )
 
@@ -30,6 +30,8 @@ type DiagnosticTarget struct {
 	BaseURL      string
 	AccessToken  string
 	UserID       string
+	Template     *config.ProbeTemplate
+	TemplateName string
 }
 
 type DiagnosticRunner struct {
@@ -46,13 +48,6 @@ type diagnosticStepDef struct {
 type diagnosticSessionMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
-}
-
-type diagnosticRequest struct {
-	Model       string                     `json:"model"`
-	Messages    []diagnosticSessionMessage `json:"messages"`
-	Stream      bool                       `json:"stream"`
-	Temperature float64                    `json:"temperature,omitempty"`
 }
 
 type diagnosticExecution struct {
@@ -120,6 +115,7 @@ func (r *DiagnosticRunner) Run(ctx context.Context, target DiagnosticTarget, sto
 			"model":         target.Model,
 			"request_model": target.RequestModel,
 			"base_url":      target.BaseURL,
+			"template_name": target.TemplateName,
 			"group_id":      groupID,
 			"steps":         stepNames(quickProbeSteps),
 		}),
@@ -140,7 +136,7 @@ func (r *DiagnosticRunner) Run(ctx context.Context, target DiagnosticTarget, sto
 			conversation = nil
 		}
 		conversation = append(conversation, diagnosticSessionMessage{Role: "user", Content: stepDef.Prompt})
-		resp, err := exec.chat(ctx, target, conversation)
+		resp, err := exec.executeOpenAIChat(ctx, target, conversation)
 		stepNow := r.now()
 		step := &storage.DiagnosticStep{
 			RunID:     runID,
@@ -331,10 +327,6 @@ type diagnosticStore interface {
 	ListDiagnosticSteps(string) ([]*storage.DiagnosticStep, error)
 }
 
-type diagnosticHTTPClient struct {
-	client *http.Client
-}
-
 func (r *DiagnosticRunner) client() *diagnosticHTTPClient {
 	if r.Client == nil {
 		r.Client = &http.Client{Timeout: 60 * time.Second}
@@ -347,82 +339,6 @@ func (r *DiagnosticRunner) now() time.Time {
 		return r.Now()
 	}
 	return time.Now()
-}
-
-func (c *diagnosticHTTPClient) chat(ctx context.Context, target DiagnosticTarget, messages []diagnosticSessionMessage) (*diagnosticExecution, error) {
-	baseURL := strings.TrimRight(strings.TrimSpace(target.BaseURL), "/")
-	if baseURL == "" {
-		return nil, fmt.Errorf("base url is empty")
-	}
-	requestURL := baseURL + "/v1/chat/completions"
-	payload := diagnosticRequest{
-		Model:       firstNonEmpty(target.RequestModel, target.Model),
-		Messages:    messages,
-		Stream:      true,
-		Temperature: 0,
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Accept", "text/event-stream, application/json")
-	req.Header.Set("Content-Type", "application/json")
-	if target.AccessToken != "" {
-		req.Header.Set("Authorization", diagnosticAuthorizationHeader(target.AccessToken))
-	}
-	if target.UserID != "" {
-		req.Header.Set("New-Api-User", target.UserID)
-	}
-
-	start := time.Now()
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	exec := &diagnosticExecution{
-		StatusCode:      resp.StatusCode,
-		RequestURL:      requestURL,
-		RequestBody:     body,
-		ResponseHeaders: headerMap(resp.Header),
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		raw, _ := io.ReadAll(resp.Body)
-		exec.ResponseText = string(raw)
-		exec.ResponsePreview = previewText(exec.ResponseText)
-		exec.LatencyMs = time.Since(start).Milliseconds()
-		return exec, fmt.Errorf("http %d", resp.StatusCode)
-	}
-
-	ctype := strings.ToLower(resp.Header.Get("Content-Type"))
-	if strings.Contains(ctype, "text/event-stream") {
-		raw, ttft, chunks, finish, responseModel, usage, err := readSSE(resp.Body)
-		exec.LatencyMs = time.Since(start).Milliseconds()
-		exec.TTFTMs = ttft.Milliseconds()
-		exec.StreamChunks = chunks
-		exec.FinishReason = finish
-		exec.ResponseModel = responseModel
-		exec.Usage = usage
-		exec.ResponseText = raw
-		exec.ResponsePreview = previewText(raw)
-		return exec, err
-	}
-
-	raw, err := io.ReadAll(resp.Body)
-	exec.LatencyMs = time.Since(start).Milliseconds()
-	if err != nil {
-		return exec, err
-	}
-	exec.ResponseText = string(raw)
-	exec.ResponsePreview = previewText(exec.ResponseText)
-	exec.StreamChunks = []string{exec.ResponsePreview}
-	exec.FinishReason = "non_stream"
-	return exec, nil
 }
 
 func diagnosticAuthorizationHeader(token string) string {

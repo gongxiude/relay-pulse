@@ -2132,11 +2132,62 @@ NEWAPI_PROBE_USER_ID=your-relay-probe-user-id
 - `NEWAPI_BASE_URL`：new-api HTTP API 基地址
 - `NEWAPI_ACCESS_TOKEN`：只读同步令牌，用于 `/api/channel`、`/api/log` 等审计同步接口
 - `NEWAPI_USER_ID`：只读同步时携带的用户标识
-- `NEWAPI_PROBE_ACCESS_TOKEN`：主动探针调用 `/v1/*` relay 接口时使用的独立凭证；未设置时回退到 `NEWAPI_ACCESS_TOKEN`
+- `NEWAPI_PROBE_ACCESS_TOKEN`：主动探针使用的独立 relay 凭证；它只决定是否有权限发送探测请求，不决定请求路径、method、headers 或 body
 - `NEWAPI_PROBE_USER_ID`：主动探针使用的用户标识；未设置时回退到 `NEWAPI_USER_ID`
-- 如果 `NEWAPI_ACCESS_TOKEN` 只能读取管理接口、不能直接访问 relay `/v1/chat/completions`，必须额外配置 `NEWAPI_PROBE_ACCESS_TOKEN`
+- 主动诊断请求的路径、method、headers 和 body 必须由诊断模板决定，不能因为配置了 probe token 就绕过模板直接硬编码调用 `/v1/chat/completions`
+- 如果 `NEWAPI_ACCESS_TOKEN` 只能读取管理接口、不能访问 relay，请额外配置 `NEWAPI_PROBE_ACCESS_TOKEN`
 - 这些变量在启动期读取，缺失会阻止服务启动
 - `.env` 文件可用于本地开发和 Docker 启动，但不参与运行时热更新
+
+#### `audit.diagnostics`
+
+`quick-probe-v1` 的运行参数通过 `audit.diagnostics` 配置。该配置只控制诊断方法学、等待窗口和凭证模式；请求路径和请求体仍由诊断模板提供。
+
+```yaml
+audit:
+  diagnostics:
+    enabled: true
+    methodology: "quick-probe-v1"
+    request_timeout: "60s"
+    step_gap_min: "1m"
+    step_gap_max: "4m"
+    cross_5m_boundary: true
+    baseline_enabled: true
+    credential_mode: "probe_fallback"
+    template_binding:
+      default:
+        cc: "cx-gpt-chat-diagnostic"
+        cx: "cx-gpt-chat-diagnostic"
+        gm: "cx-gpt-chat-diagnostic"
+        openai: "cx-gpt-chat-diagnostic"
+        anthropic: "cx-gpt-chat-diagnostic-notemp"
+        gemini: "cx-gpt-chat-diagnostic"
+```
+
+| 字段 | 说明 |
+|---|---|
+| `enabled` | 是否启用主动诊断，默认 `true` |
+| `methodology` | 方法学版本，当前固定为 `quick-probe-v1` |
+| `request_timeout` | 单步诊断请求超时，默认 `60s` |
+| `step_gap_min` / `step_gap_max` | 多步骤诊断之间的等待窗口，默认 `1m` / `4m` |
+| `cross_5m_boundary` | 是否跨 5 分钟缓存边界，默认 `true` |
+| `baseline_enabled` | 是否启用官方基线对比，默认 `true` |
+| `credential_mode` | 主动诊断凭证模式 |
+| `template_binding.default` | service 级默认模板绑定，模板补洞和诊断请求骨架从 `templates/*.json` 读取 |
+| `template_binding.model_family` | model family 级模板覆盖配置，当前已解析，后续用于覆盖默认绑定 |
+| `template_binding.channel_type` | channel type 级模板覆盖配置，当前已解析，后续用于覆盖默认绑定 |
+
+`quick-probe-v1` 当前执行器支持 `openai_chat` 请求族，绑定模板必须声明 `request_family`、`override_paths` 和 `response_parser`。OpenAI 兼容通道可使用 `cx-gpt-chat-diagnostic`；Anthropic / AWS Bedrock 转 OpenAI 兼容通道使用 `cx-gpt-chat-diagnostic-notemp`，避免 `claude-opus-4-8` 因 `temperature` 字段返回 400。普通巡检模板仍可用于模板探测补洞，但不能作为 quick-probe 的默认诊断模板。
+
+`credential_mode` 支持：
+
+| 值 | 行为 |
+|---|---|
+| `probe_only` | 只允许使用 `NEWAPI_PROBE_ACCESS_TOKEN` / `NEWAPI_PROBE_USER_ID`，缺失则诊断失败 |
+| `probe_fallback` | 优先使用 `NEWAPI_PROBE_*`，缺失时回退 `NEWAPI_ACCESS_TOKEN` / `NEWAPI_USER_ID`，默认值 |
+| `newapi_only` | 只使用 `NEWAPI_ACCESS_TOKEN` / `NEWAPI_USER_ID` |
+
+模板补洞入口使用同一套凭证解析规则。new-api 同步渠道不包含 channel key，因此模板补洞不会把同步渠道写入 `monitors`，而是临时构造探测目标、复用模板执行器，并把基础可用性结果写入 `probe_history`。
 
 ### rpdiag 质量列集成（可选，默认关闭）
 

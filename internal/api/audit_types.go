@@ -205,6 +205,89 @@ type auditDiagnosticBackfillResponse struct {
 	Items    []auditDiagnosticBackfillItemResponse `json:"items"`
 }
 
+type auditTemplateProbeBackfillRequest struct {
+	MaxTargets   int    `json:"max_targets"`
+	TemplateName string `json:"template_name"`
+}
+
+type auditTemplateProbeBackfillItemResponse struct {
+	Provider    string `json:"provider"`
+	Service     string `json:"service"`
+	Channel     string `json:"channel"`
+	Model       string `json:"model"`
+	Template    string `json:"template,omitempty"`
+	Status      string `json:"status"`
+	ProbeStatus int    `json:"probe_status,omitempty"`
+	SubStatus   string `json:"sub_status,omitempty"`
+	HTTPCode    int    `json:"http_code,omitempty"`
+	Latency     int    `json:"latency,omitempty"`
+	Error       string `json:"error,omitempty"`
+}
+
+type auditTemplateProbeBackfillResponse struct {
+	Selected int                                      `json:"selected"`
+	Probed   int                                      `json:"probed"`
+	Failed   int                                      `json:"failed"`
+	Items    []auditTemplateProbeBackfillItemResponse `json:"items"`
+}
+
+type auditModelStatusResponse struct {
+	Items []auditModelStatusItemResponse `json:"items"`
+	Meta  auditModelStatusMetaResponse   `json:"meta"`
+}
+
+type auditModelStatusMetaResponse struct {
+	Window string `json:"window"`
+	Count  int    `json:"count"`
+}
+
+type auditModelStatusItemResponse struct {
+	Provider      string                           `json:"provider"`
+	Service       string                           `json:"service"`
+	Channel       string                           `json:"channel"`
+	Model         string                           `json:"model"`
+	RequestModel  string                           `json:"request_model"`
+	Enabled       bool                             `json:"enabled"`
+	Production    auditProductionStatusResponse    `json:"production"`
+	TemplateProbe auditTemplateProbeStatusResponse `json:"template_probe"`
+	QuickProbe    auditQuickProbeStatusResponse    `json:"quick_probe"`
+}
+
+type auditProductionStatusResponse struct {
+	Source      string  `json:"source"`
+	Status      string  `json:"status"`
+	Total       int     `json:"total"`
+	Success     int     `json:"success"`
+	Error       int     `json:"error"`
+	Timeout     int     `json:"timeout"`
+	SuccessRate float64 `json:"success_rate"`
+	P95         int     `json:"p95"`
+	P99         int     `json:"p99"`
+	UpdatedAt   int64   `json:"updated_at,omitempty"`
+}
+
+type auditTemplateProbeStatusResponse struct {
+	Source    string `json:"source"`
+	Status    string `json:"status"`
+	SubStatus string `json:"sub_status,omitempty"`
+	HTTPCode  int    `json:"http_code,omitempty"`
+	Latency   int    `json:"latency,omitempty"`
+	UpdatedAt int64  `json:"updated_at,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+type auditQuickProbeStatusResponse struct {
+	Source      string  `json:"source"`
+	Status      string  `json:"status"`
+	RunID       string  `json:"run_id,omitempty"`
+	CompareURL  string  `json:"compare_url,omitempty"`
+	Usable      bool    `json:"usable"`
+	Reason      string  `json:"reason,omitempty"`
+	Score       float64 `json:"score,omitempty"`
+	UpdatedAt   int64   `json:"updated_at,omitempty"`
+	Methodology string  `json:"methodology,omitempty"`
+}
+
 type auditMethodologyDimensionResponse struct {
 	Key         string `json:"key"`
 	Weight      int    `json:"weight"`

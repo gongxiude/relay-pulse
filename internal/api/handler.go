@@ -285,6 +285,49 @@ func (h *Handler) rpdiagEnabled() bool {
 	return h.rpdiagClient != nil
 }
 
+func (h *Handler) lookupAuditProviderSlug(slug string) (string, bool) {
+	slug = strings.ToLower(strings.TrimSpace(slug))
+	if slug == "" {
+		return "", false
+	}
+	store, ok := h.storage.(interface {
+		ListLatestChannelSnapshots() ([]storage.ChannelSnapshot, error)
+		ListAuditTargets() ([]storage.AuditTarget, error)
+	})
+	if !ok {
+		return "", false
+	}
+	snapshots, err := store.ListLatestChannelSnapshots()
+	if err == nil {
+		for _, snapshot := range snapshots {
+			provider := strings.TrimSpace(snapshot.Provider)
+			if provider == "" {
+				continue
+			}
+			if strings.ToLower(provider) == slug {
+				return provider, true
+			}
+		}
+	} else {
+		logger.Warn("api", "查询审计 provider slug 失败", "slug", slug, "error", err)
+	}
+	targets, err := store.ListAuditTargets()
+	if err != nil {
+		logger.Warn("api", "查询审计 target provider slug 失败", "slug", slug, "error", err)
+		return "", false
+	}
+	for _, target := range targets {
+		provider := strings.TrimSpace(target.Provider)
+		if provider == "" {
+			continue
+		}
+		if strings.ToLower(provider) == slug {
+			return provider, true
+		}
+	}
+	return "", false
+}
+
 // GetRpdiagScores 返回 rpdiag 质量分索引（按 "provider|service|channel" 键）。
 // 当客户端未启用（MONITOR_RPDIAG_ENABLED=false / 未设置）时返回空对象，
 // 由前端兜底显示 "-"；上游异常时返回 503，前端走同样的空兜底。

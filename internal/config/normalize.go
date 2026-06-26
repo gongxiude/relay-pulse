@@ -36,6 +36,11 @@ func (c *AppConfig) normalize() error {
 		return err
 	}
 
+	// 4.6 审计配置
+	if err := c.Audit.normalize(); err != nil {
+		return err
+	}
+
 	// 5. 构建 Provider 映射索引
 	ctx := newNormalizeContext()
 	if err := c.buildNormalizeIndexes(ctx); err != nil {

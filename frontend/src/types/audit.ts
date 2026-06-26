@@ -101,6 +101,58 @@ export interface AuditDiagnosticLatestResponse {
   };
 }
 
+export interface AuditModelStatusItem {
+  provider: string;
+  service: string;
+  channel: string;
+  model: string;
+  request_model: string;
+  enabled: boolean;
+  production: {
+    source: 'production_logs';
+    status: string;
+    total: number;
+    success: number;
+    error: number;
+    timeout: number;
+    success_rate: number;
+    p95: number;
+    p99: number;
+    updated_at?: number;
+  };
+  template_probe: {
+    source: 'template_probe';
+    status: string;
+    sub_status?: string;
+    http_code?: number;
+    latency?: number;
+    updated_at?: number;
+    error?: string;
+  };
+  quick_probe: {
+    source: 'quick_probe';
+    status: string;
+    run_id?: string;
+    compare_url?: string;
+    usable: boolean;
+    reason?: string;
+    score?: number;
+    updated_at?: number;
+    methodology?: string;
+  };
+}
+
+export interface AuditModelStatusResponse {
+  success: boolean;
+  data: {
+    items: AuditModelStatusItem[];
+    meta?: {
+      window?: string;
+      count?: number;
+    };
+  };
+}
+
 export interface AuditMethodologyDimension {
   key: string;
   weight: number;

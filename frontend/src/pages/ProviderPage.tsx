@@ -6,12 +6,13 @@ import { Header } from '../components/Header';
 import { ChannelTypeIcon, parseChannelType } from '../components/ChannelTypeIcon';
 import { useAuditChannels } from '../hooks/useAuditChannels';
 import { useAuditDiagnosticLatest } from '../hooks/useAuditDiagnosticLatest';
+import { useAuditModelStatus } from '../hooks/useAuditModelStatus';
 import { useAuditSyncStatus } from '../hooks/useAuditSyncStatus';
 import { useMonitorData } from '../hooks/useMonitorData';
 import { useRpdiagScores, lookupRpdiagScore } from '../hooks/useRpdiagScores';
 import { useSeoMeta } from '../hooks/useSeoMeta';
 import type { ProcessedMonitorData } from '../types';
-import type { AuditChannelSnapshot } from '../types/audit';
+import type { AuditChannelSnapshot, AuditModelStatusItem } from '../types/audit';
 import type { RpdiagModelScore, RpdiagScoreTrend } from '../types/monitor';
 import {
   buildAuditMonitorMatchKey,
@@ -42,6 +43,7 @@ interface ModelDetailRow {
   latestAttemptStatus?: string | null;
   latestAttemptReason?: string | null;
   latestAttemptCreatedAt?: number | null;
+  sourceStatus?: AuditModelStatusItem | null;
 }
 
 const SERVICE_TAB_LABELS: Record<ServiceTab, string> = {
@@ -186,6 +188,27 @@ export default function ProviderPage() {
     includeFiltered: true,
     limit: 10,
   });
+  const {
+    items: sourceStatuses,
+    loading: sourceStatusLoading,
+    error: sourceStatusError,
+  } = useAuditModelStatus({
+    provider: currentSnapshot?.provider,
+    service: currentSnapshot ? inferAuditServiceType(currentSnapshot) : undefined,
+    channel: currentSnapshot?.channel,
+    window: '24h',
+  });
+
+  const sourceStatusMap = useMemo(() => {
+    const map = new Map<string, AuditModelStatusItem>();
+    sourceStatuses.forEach((item) => {
+      const key = normalizeModelKey(item.model);
+      if (key && !map.has(key)) {
+        map.set(key, item);
+      }
+    });
+    return map;
+  }, [sourceStatuses]);
 
   const latestDiagnosticMap = useMemo(() => {
     const map = new Map<string, typeof latestDiagnostics[number]>();
@@ -311,7 +334,8 @@ export default function ProviderPage() {
         const latestDiagnostic = latestDiagnosticMap.get(normalizeModelKey(modelName));
         const latestAttempt = latestAttemptMap.get(normalizeModelKey(modelName));
         const latestScore = latestDiagnostic?.score?.overall_score ?? null;
-        const latestAttemptRunId = latestAttempt?.run.run_id ?? null;
+        const sourceStatus = sourceStatusMap.get(normalizeModelKey(modelName)) ?? null;
+        const latestAttemptRunId = latestAttempt?.run.run_id ?? sourceStatus?.quick_probe.run_id ?? null;
         const localCompareUrl = latestAttemptRunId
           ? `${langPrefix}/detect/compare/${latestAttemptRunId}`
           : null;
@@ -335,6 +359,7 @@ export default function ProviderPage() {
             : (latestAttempt?.filter_reason ?? latestAttempt?.run.run_status ?? latestAttempt?.run.status ?? null),
           latestAttemptReason: latestAttempt?.run.run_status_reason ?? latestAttempt?.filter_reason ?? null,
           latestAttemptCreatedAt: latestAttempt?.run.created_at ?? null,
+          sourceStatus,
         } satisfies ModelDetailRow;
       })
 
@@ -342,7 +367,7 @@ export default function ProviderPage() {
       ...row,
       id: `${row.id}-${index}`,
     }));
-  }, [currentSnapshot, currentRpdiag, langPrefix, latestAttemptMap, latestDiagnosticMap, matchedMonitor, selectedModel]);
+  }, [currentSnapshot, currentRpdiag, langPrefix, latestAttemptMap, latestDiagnosticMap, matchedMonitor, selectedModel, sourceStatusMap]);
 
   const headerStats = useMemo(() => {
     const total = modelRows.length;
@@ -603,11 +628,11 @@ export default function ProviderPage() {
           </section>
 
           <main className="overflow-x-auto rounded-2xl border border-default/70 bg-surface/55 shadow-xl backdrop-blur-sm">
-            {(auditLoading || monitorLoading || latestDiagnosticsLoading) && modelRows.length === 0 ? (
+            {(auditLoading || monitorLoading || latestDiagnosticsLoading || sourceStatusLoading) && modelRows.length === 0 ? (
               <div className="px-6 py-16 text-center text-muted">正在加载模型级详情…</div>
-            ) : auditError || monitorError || latestDiagnosticsError ? (
+            ) : auditError || monitorError || latestDiagnosticsError || sourceStatusError ? (
               <div className="px-6 py-16 text-center text-danger">
-                {auditError || monitorError || latestDiagnosticsError}
+                {auditError || monitorError || latestDiagnosticsError || sourceStatusError}
               </div>
             ) : !currentSnapshot ? (
               <div className="px-6 py-16 text-center text-muted">当前筛选下没有可展示的通道。</div>
@@ -642,7 +667,29 @@ export default function ProviderPage() {
                         {currentSnapshot ? <SnapshotStatusBadge snapshot={currentSnapshot} /> : <CurrentStatusBadge enabled={row.enabled} />}
                       </td>
                       <td className="px-4 py-4">
-                        <div className="space-y-1">
+                        <div className="space-y-2">
+                          {row.sourceStatus ? (
+                            <div className="space-y-1.5">
+                              <SourceStatusLine
+                                label="生产日志"
+                                status={row.sourceStatus.production.status}
+                                detail={formatProductionDetail(row.sourceStatus.production)}
+                                updatedAt={row.sourceStatus.production.updated_at}
+                              />
+                              <SourceStatusLine
+                                label="模板补洞"
+                                status={row.sourceStatus.template_probe.status}
+                                detail={formatTemplateProbeDetail(row.sourceStatus.template_probe)}
+                                updatedAt={row.sourceStatus.template_probe.updated_at}
+                              />
+                              <SourceStatusLine
+                                label="真实性"
+                                status={row.sourceStatus.quick_probe.status}
+                                detail={formatQuickProbeDetail(row.sourceStatus.quick_probe)}
+                                updatedAt={row.sourceStatus.quick_probe.updated_at}
+                              />
+                            </div>
+                          ) : null}
                           {row.latestAttemptStatus ? (
                             <div className="flex flex-wrap items-center gap-2 text-xs">
                               <LatestAttemptStatusBadge status={row.latestAttemptStatus} />
@@ -831,6 +878,61 @@ function LatestAttemptStatusBadge({ status }: { status: string }) {
   return <span className={`inline-flex rounded-md px-2 py-0.5 font-semibold ${className}`}>{label}</span>;
 }
 
+function SourceStatusLine({
+  label,
+  status,
+  detail,
+  updatedAt,
+}: {
+  label: string;
+  status: string;
+  detail?: string;
+  updatedAt?: number;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs">
+      <span className="w-14 shrink-0 text-muted">{label}</span>
+      <SourceStatusBadge status={status} />
+      {detail ? <span className="max-w-[14rem] truncate text-secondary" title={detail}>{detail}</span> : null}
+      {updatedAt ? <span className="text-muted">{formatDateTime(updatedAt)}</span> : null}
+    </div>
+  );
+}
+
+function SourceStatusBadge({ status }: { status: string }) {
+  const normalized = status.trim().toLowerCase();
+  let label = status || '未知';
+  let className = 'bg-slate-500/15 text-slate-300';
+  switch (normalized) {
+    case 'ok':
+    case 'available':
+    case 'done':
+      label = normalized === 'ok' ? '正常' : normalized === 'available' ? '可用' : '完成';
+      className = 'bg-emerald-500/15 text-emerald-300';
+      break;
+    case 'degraded':
+      label = '降级';
+      className = 'bg-amber-500/15 text-amber-300';
+      break;
+    case 'error':
+    case 'unavailable':
+    case 'failed_auth':
+    case 'failed_request':
+      label = normalized === 'failed_auth' ? '认证失败' : normalized === 'failed_request' ? '请求失败' : '不可用';
+      className = 'bg-rose-500/15 text-rose-300';
+      break;
+    case 'no_data':
+      label = '无日志';
+      break;
+    case 'missing':
+      label = '无记录';
+      break;
+    default:
+      break;
+  }
+  return <span className={`inline-flex rounded-md px-2 py-0.5 font-semibold ${className}`}>{label}</span>;
+}
+
 function SnapshotStatusBadge({ snapshot, compact = false }: { snapshot: AuditChannelSnapshot; compact?: boolean }) {
   const rawStatus = typeof snapshot.raw?.Status === 'number' ? snapshot.raw.Status : null;
   const className = compact
@@ -970,6 +1072,26 @@ function formatDateTime(unixSeconds: number): string {
     minute: '2-digit',
     hour12: false,
   }).format(new Date(unixSeconds * 1000));
+}
+
+function formatProductionDetail(status: AuditModelStatusItem['production']): string {
+  if (status.total <= 0) return '24h 无生产样本';
+  return `${status.success}/${status.total} 成功 · ${status.success_rate.toFixed(status.success_rate >= 100 ? 0 : 1)}%`;
+}
+
+function formatTemplateProbeDetail(status: AuditModelStatusItem['template_probe']): string {
+  if (status.status === 'missing') return '尚未执行模板补洞';
+  const parts = [];
+  if (status.sub_status) parts.push(status.sub_status);
+  if (status.http_code) parts.push(`HTTP ${status.http_code}`);
+  if (status.latency) parts.push(formatLatencyCompact(status.latency));
+  return parts.join(' · ') || status.status;
+}
+
+function formatQuickProbeDetail(status: AuditModelStatusItem['quick_probe']): string {
+  if (status.status === 'missing') return '尚未执行 quick-probe';
+  if (status.score) return `${Math.round(status.score)} 分`;
+  return status.reason || status.methodology || status.status;
 }
 
 function inferSourceKey(snapshot: AuditChannelSnapshot): SourceKey {

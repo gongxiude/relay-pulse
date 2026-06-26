@@ -96,6 +96,14 @@ func (c *AppConfig) validateNewAPIConfig() error {
 	if strings.TrimSpace(c.NewAPI.UserID) == "" {
 		return fmt.Errorf("newapi.user_id 不能为空，请通过 NEWAPI_USER_ID 设置")
 	}
+	if strings.TrimSpace(c.Audit.Diagnostics.CredentialMode) == ProbeCredentialModeProbeOnly {
+		if strings.TrimSpace(c.NewAPI.ProbeAccessToken) == "" {
+			return fmt.Errorf("audit.diagnostics.credential_mode=probe_only 时 NEWAPI_PROBE_ACCESS_TOKEN 不能为空")
+		}
+		if strings.TrimSpace(c.NewAPI.ProbeUserID) == "" {
+			return fmt.Errorf("audit.diagnostics.credential_mode=probe_only 时 NEWAPI_PROBE_USER_ID 不能为空")
+		}
+	}
 	return nil
 }
 

@@ -37,6 +37,25 @@ storage:
 # new-api 只读审计接入使用 NEWAPI_BASE_URL / NEWAPI_ACCESS_TOKEN / NEWAPI_USER_ID 环境变量，
 # 主动探针如需独立 relay 凭证，可额外提供 NEWAPI_PROBE_ACCESS_TOKEN / NEWAPI_PROBE_USER_ID。
 # 不在生产 YAML 中保存凭据。
+audit:
+  diagnostics:
+    enabled: true
+    methodology: "quick-probe-v1"
+    request_timeout: "60s"
+    step_gap_min: "1m"
+    step_gap_max: "4m"
+    cross_5m_boundary: true
+    baseline_enabled: true
+    credential_mode: "probe_fallback"
+    template_binding:
+      default:
+        cc: "cx-gpt-chat-diagnostic"
+        cx: "cx-gpt-chat-diagnostic"
+        gm: "cx-gpt-chat-diagnostic"
+        openai: "cx-gpt-chat-diagnostic"
+        anthropic: "cx-gpt-chat-diagnostic-notemp"
+        gemini: "cx-gpt-chat-diagnostic"
+
 # ⚠️ 重要提示：
 # 1. 所有 api_key 应通过环境变量覆盖（MONITOR_<PROVIDER>_<SERVICE>_API_KEY）
 # 2. category 和 sponsor 为必填字段

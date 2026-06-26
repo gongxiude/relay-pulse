@@ -207,13 +207,31 @@ func resolveService(ch ChannelSpec) string {
 	if v := strings.TrimSpace(extractStringField(ch.Other, "service", "service_type")); v != "" {
 		return v
 	}
-	if v := strings.TrimSpace(ch.Group); v != "" {
-		return v
+	for _, candidate := range []string{ch.Group, ch.Models, ch.Name} {
+		if service := inferAuditService(candidate); service != "" {
+			return service
+		}
 	}
 	if ch.Type != 0 {
 		return "type-" + strconv.Itoa(ch.Type)
 	}
 	return "default"
+}
+
+func inferAuditService(value string) string {
+	text := strings.ToLower(strings.TrimSpace(value))
+	if text == "" {
+		return ""
+	}
+	switch {
+	case strings.Contains(text, "anthropic"), strings.Contains(text, "claude"):
+		return "anthropic"
+	case strings.Contains(text, "openai"), strings.Contains(text, "gpt"), strings.Contains(text, "chatgpt"):
+		return "openai"
+	case strings.Contains(text, "gemini"), strings.Contains(text, "google"):
+		return "gemini"
+	}
+	return ""
 }
 
 func extractStringField(raw json.RawMessage, keys ...string) string {

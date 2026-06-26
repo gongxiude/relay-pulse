@@ -450,7 +450,7 @@ func generatePageMeta(meta MetaData, baseURL string) PageMeta {
 
 // injectMetaTags 在 index.html 中注入 meta 标签
 // 返回 (html, isNotFound)，isNotFound 表示 provider 不存在
-func injectMetaTags(indexHTML string, path string, cfg *config.AppConfig, rpdiagEnabled bool) (string, bool) {
+func injectMetaTags(indexHTML string, path string, cfg *config.AppConfig, rpdiagEnabled bool, auditProviderLookup func(string) (string, bool)) (string, bool) {
 	baseURL := cfg.PublicBaseURL
 
 	// 解析路径
@@ -479,6 +479,12 @@ func injectMetaTags(indexHTML string, path string, cfg *config.AppConfig, rpdiag
 					providerExists = true
 					break
 				}
+			}
+		}
+		if !providerExists && auditProviderLookup != nil {
+			if name, ok := auditProviderLookup(providerSlug); ok {
+				providerName = name
+				providerExists = true
 			}
 		}
 
