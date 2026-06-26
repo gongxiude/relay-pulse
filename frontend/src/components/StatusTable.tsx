@@ -919,7 +919,7 @@ function StatusTableComponent({
 
   // 桌面端：表格视图
   return (
-    <div className="overflow-x-auto overflow-y-hidden rounded-2xl border border-default/50 shadow-xl bg-surface/40 backdrop-blur-sm">
+    <div className="overflow-x-auto rounded-2xl border border-default/50 shadow-xl bg-surface/40 backdrop-blur-sm">
       <table className="w-full text-left border-collapse bg-transparent">
         <colgroup>
           {hasAnnotations && <col className="w-px" />}
@@ -1000,7 +1000,7 @@ function StatusTableComponent({
                     onKeyDown={(e) => e.stopPropagation()}
                   >
                     <Info size={12} className="text-secondary opacity-70" aria-hidden="true" />
-                    <span className="absolute left-1/2 top-full z-50 mt-1 w-48 -translate-x-1/2 rounded-lg border border-default bg-elevated px-2 py-1.5 text-[11px] font-normal normal-case tracking-normal leading-snug whitespace-normal text-primary opacity-0 pointer-events-none shadow-lg transition-opacity delay-150 group-hover/price-tip:opacity-100 group-hover/price-tip:pointer-events-auto">
+                    <span className="absolute left-1/2 top-full z-50 mt-1 w-48 -translate-x-1/2 rounded-lg border border-default bg-elevated px-2 py-1.5 text-[11px] font-normal normal-case tracking-normal leading-snug whitespace-normal text-primary hidden shadow-lg group-hover/price-tip:block">
                       {t('table.headers.priceRatioTooltip')}
                     </span>
                   </span>
@@ -1077,7 +1077,7 @@ function StatusTableComponent({
                   onKeyDown={(e) => e.stopPropagation()}
                 >
                   <Info size={12} className="text-secondary opacity-70" aria-hidden="true" />
-                  <span className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-default bg-elevated px-2 py-1.5 text-[11px] font-normal normal-case tracking-normal leading-snug whitespace-normal text-primary opacity-0 pointer-events-none shadow-lg transition-opacity delay-150 group-hover/quality-tip:opacity-100 group-hover/quality-tip:pointer-events-auto">
+                  <span className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-default bg-elevated px-2 py-1.5 text-[11px] font-normal normal-case tracking-normal leading-snug whitespace-normal text-primary hidden shadow-lg group-hover/quality-tip:block">
                     {t(
                       'table.headers.qualityTooltip',
                       '由 rpdiag.relaypulse.top 独立采样的质量分（0-100）。通道里每个模型一条 5 点 sparkline 叠绘：30d 均 / 7d 均 / 最近 3 次单 sample；80 / 100 两条参考线作 Y 轴刻度。',
