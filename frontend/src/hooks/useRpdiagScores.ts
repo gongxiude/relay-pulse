@@ -56,17 +56,15 @@ export function useRpdiagScores(): UseRpdiagScoresResult {
 }
 
 /** 构造与后端一致的 join key（lower-case "provider|service|channel"）。
- *  channel 入参可以是带 rpdiag 前缀的形式（如 "O-Max"），会自动剥前缀。 */
+ *  channel 段用**原始通道名**（rpdiag channel_name），只做 trim + lower、不剥前缀——
+ *  剥前缀会把仅靠前缀区分的通道折叠（如某商 o-cx 付费档 / u-cx 免费档都塌成 cx）。
+ *  后端 buildScoreRowView 同样按原始 channel_name 建 key，两侧对齐。 */
 export function buildRpdiagKey(
   provider: string | undefined,
   service: string | undefined,
   channel: string | undefined,
 ): string {
-  return [
-    canonical(provider),
-    canonical(service),
-    stripChannelPrefix(canonical(channel)),
-  ].join('|');
+  return [canonical(provider), canonical(service), canonical(channel)].join('|');
 }
 
 /** 按 (provider, service, channel) 查表，缺失返回 undefined。 */
@@ -82,11 +80,4 @@ export function lookupRpdiagScore(
 
 function canonical(v: string | undefined): string {
   return (v ?? '').trim().toLowerCase();
-}
-
-function stripChannelPrefix(name: string): string {
-  if (name.length > 2 && name[1] === '-' && 'ormu'.includes(name[0])) {
-    return name.slice(2);
-  }
-  return name;
 }

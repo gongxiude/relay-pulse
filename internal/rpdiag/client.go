@@ -573,12 +573,15 @@ func buildScoreRowView(row rankingRow, now time.Time) (scoreRowView, bool) {
 
 	provider := canonical(row.ProviderName)
 	service := normalizeService(row.ServiceCLICommand)
-	channel := canonical(row.RelaypulseChannelKey)
-	if channel == "" {
-		// Older rpdiag deployments (<v5.1) don't ship the join key —
-		// strip the prefix locally so we still work during rollout.
-		channel = NormalizeChannelKey(row.ChannelName)
-	}
+	// Join on the raw channel_name, NOT relaypulse_channel_key. The latter
+	// strips the leading O-/R-/M-/U- source prefix, which collapses distinct
+	// channels whose only distinguishing part IS that prefix — e.g. a provider's
+	// `o-cx` (paid) and `u-cx` (free) codex tiers both strip to "cx" and merge
+	// into one cell. rpdiag ships the raw channel_name on every v5.x row and the
+	// relaypulse monitor carries the same prefixed name, so a trim+lower match
+	// keeps the tiers separate without either side sharing a prefix convention.
+	// (relaypulse_channel_key stays decoded on the wire for observability.)
+	channel := canonical(row.ChannelName)
 	if provider == "" || service == "" || channel == "" {
 		return scoreRowView{}, false
 	}
@@ -704,24 +707,10 @@ func (c *Client) buildScoresAt(rows []rankingRow, now time.Time) map[string]Scor
 
 // ScoreKey is the join key shape: lower-case "provider|service|channel".
 // `service` should already be the relaypulse short code (cc/cx/gm), and
-// `channel` should already be the bare key (no rpdiag prefix). Helpers
-// below normalize callers' inputs.
+// `channel` is the raw rpdiag channel_name — no prefix stripping (see
+// buildScoreRowView for why). ScoreKey trims + lower-cases each segment.
 func ScoreKey(provider, service, channel string) string {
 	return canonical(provider) + "|" + canonical(service) + "|" + canonical(channel)
-}
-
-// NormalizeChannelKey strips a single-letter rpdiag source prefix (O-/R-/
-// M-/U-, case-insensitive) and lower-cases the rest. Channels without a
-// prefix pass through lower-cased.
-func NormalizeChannelKey(name string) string {
-	normalized := canonical(name)
-	if len(normalized) > 2 && normalized[1] == '-' {
-		switch normalized[0] {
-		case 'o', 'r', 'm', 'u':
-			return normalized[2:]
-		}
-	}
-	return normalized
 }
 
 // normalizeService maps rpdiag's CLI command name onto relaypulse's
