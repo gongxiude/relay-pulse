@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { apiGet } from '../utils/apiClient';
-import type { AuditModelStatusItem, AuditModelStatusResponse } from '../types/audit';
+import type { AuditModelStatusItem, AuditModelStatusMeta, AuditModelStatusResponse } from '../types/audit';
 
 interface UseAuditModelStatusArgs {
   provider?: string;
@@ -12,6 +12,7 @@ interface UseAuditModelStatusArgs {
 
 interface UseAuditModelStatusResult {
   items: AuditModelStatusItem[];
+  meta: AuditModelStatusMeta | null;
   loading: boolean;
   error: string | null;
 }
@@ -23,6 +24,7 @@ export function useAuditModelStatus({
   window = '24h',
 }: UseAuditModelStatusArgs): UseAuditModelStatusResult {
   const [items, setItems] = useState<AuditModelStatusItem[]>([]);
+  const [meta, setMeta] = useState<AuditModelStatusMeta | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,6 +40,7 @@ export function useAuditModelStatus({
   useEffect(() => {
     if (!provider || !service || !channel) {
       setItems([]);
+      setMeta(null);
       setLoading(false);
       setError(null);
       return;
@@ -51,10 +54,12 @@ export function useAuditModelStatus({
       .then((response) => {
         if (cancelled) return;
         setItems(Array.isArray(response?.data?.items) ? response.data.items : []);
+        setMeta(response?.data?.meta ?? null);
       })
       .catch((err) => {
         if (cancelled) return;
         if (err instanceof Error && err.name === 'AbortError') return;
+        setMeta(null);
         setError(err instanceof Error ? err.message : '加载模型状态来源失败');
       })
       .finally(() => {
@@ -68,5 +73,5 @@ export function useAuditModelStatus({
     };
   }, [provider, service, channel, query]);
 
-  return { items, loading, error };
+  return { items, meta, loading, error };
 }

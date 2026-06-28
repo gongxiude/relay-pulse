@@ -63,6 +63,7 @@ type auditCredentialStore interface {
 type auditModelStatusStore interface {
 	auditReadStore
 	GetLatest(provider, service, channel, model string) (*storage.ProbeRecord, error)
+	GetHistory(provider, service, channel, model string, since time.Time) ([]*storage.ProbeRecord, error)
 }
 
 func (h *Handler) auditStore() (auditReadStore, bool) {
@@ -524,8 +525,9 @@ func (h *Handler) GetAuditModelStatus(c *gin.Context) {
 		"data": auditModelStatusResponse{
 			Items: items,
 			Meta: auditModelStatusMetaResponse{
-				Window: window,
-				Count:  len(items),
+				Window:  window,
+				Count:   len(items),
+				Summary: buildAuditModelStatusSummary(items),
 			},
 		},
 	})
@@ -1777,7 +1779,7 @@ func buildAuditModelStatusItems(store auditModelStatusStore, targets []storage.A
 		}
 		logKey := channelID + "|" + modelKey
 		production := buildAuditProductionStatus(logMap[logKey], window, now, logUpdatedAt[logKey])
-		templateProbe, err := buildAuditTemplateProbeStatus(store, target)
+		templateProbe, err := buildAuditTemplateProbeStatus(store, target, window, now)
 		if err != nil {
 			return nil, err
 		}
@@ -1800,6 +1802,39 @@ func buildAuditModelStatusItems(store auditModelStatusStore, targets []storage.A
 		})
 	}
 	return items, nil
+}
+
+func buildAuditModelStatusSummary(items []auditModelStatusItemResponse) auditModelStatusSummaryResponse {
+	summary := auditModelStatusSummaryResponse{TotalModels: len(items)}
+	for _, item := range items {
+		if item.Enabled {
+			summary.EnabledModels++
+		}
+		summary.TemplateProbeTotal += item.TemplateProbe.Total
+		summary.TemplateProbeSuccess += item.TemplateProbe.Success + item.TemplateProbe.Degraded
+		summary.TemplateProbeTimeout += item.TemplateProbe.Timeout
+		summary.TemplateProbeNoResponse += item.TemplateProbe.NoResponse
+		summary.ProductionTotal += item.Production.Total
+		summary.ProductionSuccess += item.Production.Success
+		switch item.QuickProbe.Status {
+		case "done":
+			summary.QuickProbeDone++
+		case "missing":
+			summary.QuickProbeMissing++
+		default:
+			summary.QuickProbeFailed++
+		}
+		if item.QuickProbe.BaselineMode != "" && item.QuickProbe.BaselineMode != "candidate_only" {
+			summary.BaselineCompared++
+		}
+	}
+	if summary.TemplateProbeTotal > 0 {
+		summary.TemplateAvailability = float64(summary.TemplateProbeSuccess) / float64(summary.TemplateProbeTotal) * 100
+	}
+	if summary.ProductionTotal > 0 {
+		summary.ProductionSuccessRate = float64(summary.ProductionSuccess) / float64(summary.ProductionTotal) * 100
+	}
+	return summary
 }
 
 func buildAuditProductionStatus(logs []audit.LogSpec, window string, now time.Time, updatedAt int64) auditProductionStatusResponse {
@@ -1831,30 +1866,63 @@ func buildAuditProductionStatus(logs []audit.LogSpec, window string, now time.Ti
 	}
 }
 
-func buildAuditTemplateProbeStatus(store auditModelStatusStore, target storage.AuditTarget) (auditTemplateProbeStatusResponse, error) {
+func buildAuditTemplateProbeStatus(store auditModelStatusStore, target storage.AuditTarget, window string, now time.Time) (auditTemplateProbeStatusResponse, error) {
 	record, err := store.GetLatest(target.Provider, target.Service, target.Channel, target.Model)
 	if err != nil {
 		return auditTemplateProbeStatusResponse{}, err
 	}
-	if record == nil {
-		return auditTemplateProbeStatusResponse{Source: "template_probe", Status: "missing"}, nil
+	history, err := store.GetHistory(target.Provider, target.Service, target.Channel, target.Model, now.Add(-windowDuration(window)))
+	if err != nil {
+		return auditTemplateProbeStatusResponse{}, err
 	}
-	status := "unavailable"
-	switch record.Status {
+
+	resp := auditTemplateProbeStatusResponse{
+		Source: "template_probe",
+		Status: "missing",
+		Window: window,
+	}
+	if record != nil {
+		resp.Status = templateProbeStatusLabel(record.Status)
+		resp.SubStatus = string(record.SubStatus)
+		resp.HTTPCode = record.HttpCode
+		resp.Latency = record.Latency
+		resp.UpdatedAt = record.Timestamp
+		resp.Error = record.ErrorDetail
+	}
+	for _, item := range history {
+		if item == nil {
+			continue
+		}
+		resp.Total++
+		switch item.Status {
+		case 1:
+			resp.Success++
+		case 2:
+			resp.Degraded++
+		}
+		subStatus := strings.ToLower(strings.TrimSpace(string(item.SubStatus)))
+		if subStatus == "response_timeout" || strings.Contains(subStatus, "timeout") {
+			resp.Timeout++
+		}
+		if item.Status == 0 && item.HttpCode == 0 {
+			resp.NoResponse++
+		}
+	}
+	if resp.Total > 0 {
+		resp.Availability = float64(resp.Success+resp.Degraded) / float64(resp.Total) * 100
+	}
+	return resp, nil
+}
+
+func templateProbeStatusLabel(status int) string {
+	switch status {
 	case 1:
-		status = "available"
+		return "available"
 	case 2:
-		status = "degraded"
+		return "degraded"
+	default:
+		return "unavailable"
 	}
-	return auditTemplateProbeStatusResponse{
-		Source:    "template_probe",
-		Status:    status,
-		SubStatus: string(record.SubStatus),
-		HTTPCode:  record.HttpCode,
-		Latency:   record.Latency,
-		UpdatedAt: record.Timestamp,
-		Error:     record.ErrorDetail,
-	}, nil
 }
 
 func buildAuditQuickProbeStatus(store auditModelStatusStore, target storage.AuditTarget) (auditQuickProbeStatusResponse, error) {
@@ -1894,20 +1962,49 @@ func buildAuditQuickProbeStatus(store auditModelStatusStore, target storage.Audi
 	if !usable && runResp.RunStatusReason == "" {
 		runResp.RunStatusReason = summarizeDiagnosticFailureReason(classifiedSteps, reason)
 	}
+	dimensions, err := store.ListDiagnosticDimensions(run.RunID)
+	if err != nil {
+		return auditQuickProbeStatusResponse{}, err
+	}
+	dimensionsTotal, dimensionsPass, dimensionsFail, dimensionsSkip := summarizeDiagnosticDimensions(dimensions)
 	resp := auditQuickProbeStatusResponse{
-		Source:      "quick_probe",
-		Status:      status,
-		RunID:       run.RunID,
-		Usable:      usable,
-		Reason:      firstNonEmptyString(runResp.RunStatusReason, reason),
-		UpdatedAt:   run.UpdatedAt,
-		Methodology: runResp.MethodologyVersion,
+		Source:          "quick_probe",
+		Status:          status,
+		RunID:           run.RunID,
+		Usable:          usable,
+		Reason:          firstNonEmptyString(runResp.RunStatusReason, reason),
+		UpdatedAt:       run.UpdatedAt,
+		Methodology:     runResp.MethodologyVersion,
+		BaselineMode:    runResp.BaselineMode,
+		DimensionsTotal: dimensionsTotal,
+		DimensionsPass:  dimensionsPass,
+		DimensionsFail:  dimensionsFail,
+		DimensionsSkip:  dimensionsSkip,
 	}
 	resp.CompareURL = "/api/audit/compare/" + run.RunID
 	if scoreResp := buildAuditDiagnosticScore(run, score); scoreResp != nil {
 		resp.Score = scoreResp.OverallScore
+		resp.ActiveWeight = scoreResp.ActiveWeight
 	}
 	return resp, nil
+}
+
+func summarizeDiagnosticDimensions(dimensions []*storage.DiagnosticDimension) (total, pass, fail, skip int) {
+	for _, dimension := range dimensions {
+		if dimension == nil {
+			continue
+		}
+		total++
+		switch strings.ToLower(strings.TrimSpace(dimension.Status)) {
+		case "pass":
+			pass++
+		case "skip":
+			skip++
+		default:
+			fail++
+		}
+	}
+	return total, pass, fail, skip
 }
 
 func filterAuditTargets(targets []storage.AuditTarget, provider, service, channel, model string) []storage.AuditTarget {
