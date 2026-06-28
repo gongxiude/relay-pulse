@@ -149,6 +149,13 @@ export interface AuditModelStatusItem {
     latency?: number;
     updated_at?: number;
     error?: string;
+    window?: string;
+    total: number;
+    success: number;
+    degraded: number;
+    timeout: number;
+    no_response: number;
+    availability: number;
   };
   quick_probe: {
     source: 'quick_probe';
@@ -160,6 +167,33 @@ export interface AuditModelStatusItem {
     score?: number;
     updated_at?: number;
     methodology?: string;
+    baseline_mode?: string;
+    active_weight?: number;
+    dimensions_total?: number;
+    dimensions_pass?: number;
+    dimensions_fail?: number;
+    dimensions_skip?: number;
+  };
+}
+
+export interface AuditModelStatusMeta {
+  window?: string;
+  count?: number;
+  summary?: {
+    total_models: number;
+    enabled_models: number;
+    template_probe_total: number;
+    template_probe_success: number;
+    template_probe_timeout: number;
+    template_probe_no_response: number;
+    template_availability: number;
+    production_total: number;
+    production_success: number;
+    production_success_rate: number;
+    quick_probe_done: number;
+    quick_probe_failed: number;
+    quick_probe_missing: number;
+    baseline_compared: number;
   };
 }
 
@@ -167,10 +201,7 @@ export interface AuditModelStatusResponse {
   success: boolean;
   data: {
     items: AuditModelStatusItem[];
-    meta?: {
-      window?: string;
-      count?: number;
-    };
+    meta?: AuditModelStatusMeta;
   };
 }
 
