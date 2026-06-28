@@ -155,6 +155,9 @@ func (s *SQLiteStorage) Init() error {
 	if err := s.ensureAuditTargetsAPIKeyColumn(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureAuditTargetsSourceColumn(ctx); err != nil {
+		return err
+	}
 
 	return nil
 }

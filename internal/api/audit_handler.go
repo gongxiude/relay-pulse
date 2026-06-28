@@ -335,6 +335,12 @@ func (h *Handler) GetAuditChannels(c *gin.Context) {
 		apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
 		return
 	}
+	targets, err := store.ListAuditTargets()
+	if err != nil {
+		apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+		return
+	}
+	snapshots = mergeManualAuditTargetSnapshots(snapshots, targets)
 	for i := range snapshots {
 		rawMap := map[string]any{}
 		if len(snapshots[i].Raw) > 0 {
@@ -353,6 +359,115 @@ func (h *Handler) GetAuditChannels(c *gin.Context) {
 			"count": len(snapshots),
 		},
 	})
+}
+
+func mergeManualAuditTargetSnapshots(snapshots []storage.ChannelSnapshot, targets []storage.AuditTarget) []storage.ChannelSnapshot {
+	type groupedTarget struct {
+		provider string
+		service  string
+		channel  string
+		models   map[string]struct{}
+		enabled  bool
+	}
+
+	existing := make(map[string]struct{}, len(snapshots))
+	for _, snapshot := range snapshots {
+		existing[auditChannelSnapshotKey(snapshot.Provider, snapshot.Service, snapshot.Channel)] = struct{}{}
+	}
+
+	grouped := map[string]*groupedTarget{}
+	for _, target := range targets {
+		if normalizeAuditTargetSource(target.Source) != "manual_baseline" {
+			continue
+		}
+		key := auditChannelSnapshotKey(target.Provider, target.Service, target.Channel)
+		if _, ok := existing[key]; ok {
+			continue
+		}
+		group, ok := grouped[key]
+		if !ok {
+			group = &groupedTarget{
+				provider: target.Provider,
+				service:  target.Service,
+				channel:  target.Channel,
+				models:   map[string]struct{}{},
+				enabled:  false,
+			}
+			grouped[key] = group
+		}
+		if strings.TrimSpace(target.Model) != "" {
+			group.models[strings.TrimSpace(target.Model)] = struct{}{}
+		}
+		group.enabled = group.enabled || target.Enabled
+	}
+	if len(grouped) == 0 {
+		return snapshots
+	}
+
+	now := time.Now().Unix()
+	for _, group := range grouped {
+		models := make([]string, 0, len(group.models))
+		for model := range group.models {
+			models = append(models, model)
+		}
+		sort.Strings(models)
+		raw, _ := json.Marshal(map[string]any{
+			"source":  "manual_baseline",
+			"Name":    stripAuditChannelID(group.channel),
+			"Service": group.service,
+		})
+		snapshots = append(snapshots, storage.ChannelSnapshot{
+			NewAPIChannelID: parseAuditChannelSnapshotID(group.channel),
+			SnapshotAt:      now,
+			Provider:        group.provider,
+			Service:         group.service,
+			Channel:         group.channel,
+			Model:           strings.Join(models, ","),
+			Enabled:         group.enabled,
+			Raw:             raw,
+		})
+	}
+	sort.SliceStable(snapshots, func(i, j int) bool {
+		if snapshots[i].Provider != snapshots[j].Provider {
+			return snapshots[i].Provider < snapshots[j].Provider
+		}
+		if snapshots[i].Service != snapshots[j].Service {
+			return snapshots[i].Service < snapshots[j].Service
+		}
+		if snapshots[i].Channel != snapshots[j].Channel {
+			return snapshots[i].Channel < snapshots[j].Channel
+		}
+		return snapshots[i].NewAPIChannelID < snapshots[j].NewAPIChannelID
+	})
+	return snapshots
+}
+
+func auditChannelSnapshotKey(provider, service, channel string) string {
+	return strings.Join([]string{
+		strings.TrimSpace(provider),
+		strings.TrimSpace(service),
+		strings.TrimSpace(channel),
+	}, "\x00")
+}
+
+func normalizeAuditTargetSource(source string) string {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return "newapi_sync"
+	}
+	return source
+}
+
+func parseAuditChannelSnapshotID(channel string) int64 {
+	prefix, _, ok := strings.Cut(strings.TrimSpace(channel), ":")
+	if !ok {
+		return 0
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(prefix), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return id
 }
 
 func (h *Handler) GetAuditRanking(c *gin.Context) {

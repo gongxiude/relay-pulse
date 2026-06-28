@@ -690,6 +690,50 @@ func TestGetAuditDiagnosticHistoryFiltersAndPaginates(t *testing.T) {
 	}
 }
 
+func TestGetAuditChannelsIncludesManualBaselineTargets(t *testing.T) {
+	store := newAuditTestStore(t)
+	if err := store.ReplaceAuditTargets([]storage.AuditTarget{
+		{
+			Provider:     "alan-官key直连",
+			Service:      "anthropic",
+			Channel:      "80:alan-官key直连",
+			Model:        "claude-opus-4-8",
+			RequestModel: "claude-opus-4-8",
+			Enabled:      true,
+			BaseURL:      "http://127.0.0.1:4000",
+			Source:       "manual_baseline",
+			APIKey:       "sk-test",
+		},
+		{
+			Provider:     "alan-官key直连",
+			Service:      "anthropic",
+			Channel:      "80:alan-官key直连",
+			Model:        "claude-sonnet-4-6",
+			RequestModel: "claude-sonnet-4-6",
+			Enabled:      true,
+			Source:       "manual_baseline",
+		},
+	}); err != nil {
+		t.Fatalf("ReplaceAuditTargets: %v", err)
+	}
+
+	router := newAuditTestRouter(t, store, &config.AppConfig{DegradedWeight: 0.7})
+	req := httptest.NewRequest(http.MethodGet, "/api/audit/channels", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !containsJSON(body, `"provider":"alan-官key直连"`) ||
+		!containsJSON(body, `"channel":"80:alan-官key直连"`) ||
+		!containsJSON(body, `"model":"claude-opus-4-8,claude-sonnet-4-6"`) ||
+		!containsJSON(body, `"channelType":"official"`) {
+		t.Fatalf("manual baseline channel missing: %s", body)
+	}
+}
+
 func TestAuditModelStatusSeparatesSources(t *testing.T) {
 	store := newAuditTestStore(t)
 	now := time.Now().Unix()

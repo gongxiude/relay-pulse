@@ -159,6 +159,73 @@ func TestAuditTargetsPreserveAPIKeyOnReplace(t *testing.T) {
 	}
 }
 
+func TestAuditTargetsPreserveManualBaselineOnReplace(t *testing.T) {
+	store := newTestStore(t)
+
+	initial := []AuditTarget{
+		{
+			Provider:     "synced",
+			Service:      "anthropic",
+			Channel:      "101:synced",
+			Model:        "claude-sonnet-4-6",
+			RequestModel: "claude-sonnet-4-6",
+			Enabled:      true,
+			Source:       "newapi_sync",
+		},
+		{
+			Provider:     "manual",
+			Service:      "anthropic",
+			Channel:      "80:manual",
+			Model:        "claude-opus-4-8",
+			RequestModel: "claude-opus-4-8",
+			Enabled:      true,
+			BaseURL:      "https://baseline.example.com",
+			Source:       "manual_baseline",
+			APIKey:       "sk-baseline-key",
+		},
+	}
+	if err := store.ReplaceAuditTargets(initial); err != nil {
+		t.Fatalf("ReplaceAuditTargets initial: %v", err)
+	}
+
+	nextSync := []AuditTarget{{
+		Provider:     "synced",
+		Service:      "anthropic",
+		Channel:      "102:synced-next",
+		Model:        "claude-haiku-4-5",
+		RequestModel: "claude-haiku-4-5",
+		Enabled:      true,
+	}}
+	if err := store.ReplaceAuditTargets(nextSync); err != nil {
+		t.Fatalf("ReplaceAuditTargets nextSync: %v", err)
+	}
+
+	targets, err := store.ListAuditTargets()
+	if err != nil {
+		t.Fatalf("ListAuditTargets: %v", err)
+	}
+	if len(targets) != 2 {
+		t.Fatalf("targets len = %d, want 2: %+v", len(targets), targets)
+	}
+	byChannel := map[string]AuditTarget{}
+	for _, target := range targets {
+		byChannel[target.Channel] = target
+	}
+	if _, ok := byChannel["101:synced"]; ok {
+		t.Fatalf("stale synced target should be removed: %+v", byChannel)
+	}
+	manual, ok := byChannel["80:manual"]
+	if !ok {
+		t.Fatalf("manual baseline target missing: %+v", byChannel)
+	}
+	if manual.Source != "manual_baseline" || manual.BaseURL != "https://baseline.example.com" || manual.APIKey != "sk-baseline-key" {
+		t.Fatalf("manual baseline fields not preserved: %+v", manual)
+	}
+	if byChannel["102:synced-next"].Source != "newapi_sync" {
+		t.Fatalf("new synced target source = %q, want newapi_sync", byChannel["102:synced-next"].Source)
+	}
+}
+
 func TestAuditTargetCredentialUpdateAppliesToChannelModels(t *testing.T) {
 	store := newTestStore(t)
 	targets := []AuditTarget{
