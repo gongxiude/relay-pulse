@@ -48,6 +48,7 @@ func newAuditTestRouter(t *testing.T, store *storage.SQLiteStorage, cfg *config.
 	r.GET("/api/audit/model-status", h.GetAuditModelStatus)
 	r.GET("/api/audit/methodology", h.GetAuditMethodology)
 	r.GET("/api/audit/diagnostics/latest", h.GetAuditDiagnosticLatest)
+	r.GET("/api/audit/diagnostics/history", h.GetAuditDiagnosticHistory)
 	r.POST("/api/audit/diagnostics/backfill", h.PostAuditDiagnosticBackfill)
 	r.POST("/api/audit/template-probes/backfill", h.PostAuditTemplateProbeBackfill)
 	r.GET("/api/audit/diagnostics/:run_id", h.GetAuditDiagnostic)
@@ -564,6 +565,61 @@ func TestAuditDiagnosticAndCompare(t *testing.T) {
 	}
 	if methodologyResp.Data.Runtime.ProbeCredentialMode != config.ProbeCredentialModeProbeFallback || methodologyResp.Data.Runtime.ProbeReady {
 		t.Fatalf("unexpected methodology runtime: %+v", methodologyResp.Data.Runtime)
+	}
+}
+
+func TestGetAuditDiagnosticHistoryFiltersAndPaginates(t *testing.T) {
+	store := newAuditTestStore(t)
+	runs := []*storage.DiagnosticRun{
+		{RunID: "hist-1", Provider: "p1", Service: "anthropic", Channel: "ch1", Model: "m1", Status: "done", CreatedAt: 100, UpdatedAt: 100},
+		{RunID: "hist-2", Provider: "p1", Service: "anthropic", Channel: "ch1", Model: "m1", Status: "failed_auth", CreatedAt: 200, UpdatedAt: 200},
+		{RunID: "hist-3", Provider: "p1", Service: "anthropic", Channel: "ch1", Model: "m1", Status: "failed_request", CreatedAt: 300, UpdatedAt: 300},
+		{RunID: "hist-other", Provider: "p1", Service: "openai", Channel: "ch1", Model: "m1", Status: "done", CreatedAt: 400, UpdatedAt: 400},
+	}
+	for _, run := range runs {
+		if err := store.SaveDiagnosticRun(run); err != nil {
+			t.Fatalf("SaveDiagnosticRun(%s): %v", run.RunID, err)
+		}
+		if err := store.SaveDiagnosticScore(&storage.DiagnosticScore{
+			RunID:             run.RunID,
+			AuthenticityScore: 80,
+			ProtocolScore:     80,
+			SSEScore:          80,
+			CreatedAt:         run.CreatedAt,
+		}); err != nil {
+			t.Fatalf("SaveDiagnosticScore(%s): %v", run.RunID, err)
+		}
+	}
+
+	router := newAuditTestRouter(t, store, &config.AppConfig{DegradedWeight: 0.7})
+	req := httptest.NewRequest(http.MethodGet, "/api/audit/diagnostics/history?provider=p1&service=anthropic&channel=ch1&model=m1&limit=2&offset=1", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Items []auditDiagnosticLatestItemResponse `json:"items"`
+			Meta  auditDiagnosticHistoryMetaResponse  `json:"meta"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("success=false")
+	}
+	if resp.Data.Meta.Total != 3 || resp.Data.Meta.Count != 2 || resp.Data.Meta.Offset != 1 {
+		t.Fatalf("bad meta: %+v", resp.Data.Meta)
+	}
+	if resp.Data.Items[0].Run.RunID != "hist-2" || resp.Data.Items[1].Run.RunID != "hist-1" {
+		t.Fatalf("unexpected items: %+v", resp.Data.Items)
+	}
+	if resp.Data.Items[0].CompareURL != "/api/audit/compare/hist-2" {
+		t.Fatalf("compare_url=%q", resp.Data.Items[0].CompareURL)
 	}
 }
 

@@ -359,7 +359,7 @@ export default function ProviderPage() {
           enabled: currentSnapshot.enabled,
           latestRunId: latestAttemptRunId,
           compareUrl: localCompareUrl,
-          historyUrl: `${langPrefix}/detect/compare?${historyParams.toString()}`,
+          historyUrl: `${langPrefix}/detect/history?${historyParams.toString()}`,
           latestMethodologyVersion: latestDiagnostic?.score?.methodology_version ?? latestDiagnostic?.run.methodology_version ?? null,
           latestAttemptStatus: latestAttempt?.usable
             ? (latestAttempt?.run.run_status ?? latestAttempt?.run.status ?? null)

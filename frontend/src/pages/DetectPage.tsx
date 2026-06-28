@@ -1,7 +1,6 @@
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Helmet } from 'react-helmet-async';
-import { useSearchParams } from 'react-router-dom';
 import {
   Activity,
   ShieldQuestion,
@@ -264,20 +263,10 @@ function DiagnosticStatusBadge({ item }: { item: AuditDiagnosticLatestItem }) {
 
 function LatestDiagnosticEvidence() {
   const { i18n } = useTranslation();
-  const [searchParams] = useSearchParams();
   const langPrefix = LANGUAGE_PATH_MAP[i18n.language as SupportedLanguage];
-  const provider = searchParams.get('provider') || undefined;
-  const service = searchParams.get('service') || undefined;
-  const channel = searchParams.get('channel') || undefined;
-  const model = searchParams.get('model') || undefined;
-  const filtered = Boolean(provider || service || channel || model);
   const { items, loading, error } = useAuditDiagnosticLatest({
-    provider,
-    service,
-    channel,
-    model,
     includeFiltered: true,
-    limit: filtered ? 20 : 10,
+    limit: 10,
   });
   const evidenceHref = (runId: string) => (langPrefix ? `/${langPrefix}/detect/compare/${runId}` : `/detect/compare/${runId}`);
 
@@ -288,108 +277,61 @@ function LatestDiagnosticEvidence() {
     return <div className="rounded-xl border border-danger/30 bg-danger/5 p-5 text-sm text-danger">加载最近检测证据失败：{error}</div>;
   }
   if (items.length === 0) {
-    return (
-      <div className="space-y-3">
-        {filtered ? (
-          <DiagnosticFilterSummary provider={provider} service={service} channel={channel} model={model} />
-        ) : null}
-        <div className="rounded-xl border border-default bg-surface p-5 text-sm text-muted">
-          {filtered ? '当前通道 / 模型还没有检测历史。完成一次 quick-probe 后会显示在这里。' : '当前还没有检测证据。完成一次 quick-probe 后会显示在这里。'}
-        </div>
-      </div>
-    );
+    return <div className="rounded-xl border border-default bg-surface p-5 text-sm text-muted">当前还没有检测证据。完成一次 quick-probe 后会显示在这里。</div>;
   }
 
   return (
-    <div className="space-y-3">
-      {filtered ? (
-        <DiagnosticFilterSummary provider={provider} service={service} channel={channel} model={model} />
-      ) : null}
-      <div className="overflow-x-auto rounded-2xl border border-default bg-surface">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-muted border-b border-default/60">
-              <th className="px-3 py-3 font-medium whitespace-nowrap">时间</th>
-              <th className="px-3 py-3 font-medium">服务商</th>
-              <th className="px-3 py-3 font-medium">通道</th>
-              <th className="px-3 py-3 font-medium">模型</th>
-              <th className="px-3 py-3 font-medium">状态</th>
-              <th className="px-3 py-3 font-medium text-right">分数</th>
-              <th className="px-3 py-3 font-medium text-right">证据</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item) => (
-              <tr key={item.run.run_id} className="border-b border-default/30 hover:bg-elevated/40 transition-colors last:border-b-0">
-                <td className="px-3 py-2.5 font-mono text-xs text-muted whitespace-nowrap">{formatEvidenceTime(item.run.created_at)}</td>
-                <td className="px-3 py-2.5 text-primary font-medium">{item.run.provider || '—'}</td>
-                <td className="px-3 py-2.5 text-secondary">{item.run.channel || '—'}</td>
-                <td className="px-3 py-2.5 font-mono text-xs text-secondary">{item.run.model || item.run.request_model || '—'}</td>
-                <td className="px-3 py-2.5">
-                  <DiagnosticStatusBadge item={item} />
-                  {!item.usable && item.run.run_status_reason ? (
-                    <div className="mt-1 max-w-[14rem] text-xs leading-relaxed text-amber-300">{item.run.run_status_reason}</div>
-                  ) : null}
-                </td>
-                <td className="px-3 py-2.5 text-right">
-                  {item.score ? (
-                    <span
-                      className="inline-block min-w-[2.75rem] rounded-md px-2 py-0.5 font-mono font-bold text-[hsl(0_0%_100%)]"
-                      style={{ backgroundColor: scoreColor(item.score.overall_score) }}
-                    >
-                      {item.score.overall_score.toFixed(0)}
-                    </span>
-                  ) : (
-                    <span className="text-muted">—</span>
-                  )}
-                </td>
-                <td className="px-3 py-2.5 text-right">
-                  <a
-                    href={evidenceHref(item.run.run_id)}
-                    className="inline-flex items-center gap-1 text-accent hover:underline whitespace-nowrap"
+    <div className="overflow-x-auto rounded-2xl border border-default bg-surface">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-muted border-b border-default/60">
+            <th className="px-3 py-3 font-medium whitespace-nowrap">时间</th>
+            <th className="px-3 py-3 font-medium">服务商</th>
+            <th className="px-3 py-3 font-medium">通道</th>
+            <th className="px-3 py-3 font-medium">模型</th>
+            <th className="px-3 py-3 font-medium">状态</th>
+            <th className="px-3 py-3 font-medium text-right">分数</th>
+            <th className="px-3 py-3 font-medium text-right">证据</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item) => (
+            <tr key={item.run.run_id} className="border-b border-default/30 hover:bg-elevated/40 transition-colors last:border-b-0">
+              <td className="px-3 py-2.5 font-mono text-xs text-muted whitespace-nowrap">{formatEvidenceTime(item.run.created_at)}</td>
+              <td className="px-3 py-2.5 text-primary font-medium">{item.run.provider || '—'}</td>
+              <td className="px-3 py-2.5 text-secondary">{item.run.channel || '—'}</td>
+              <td className="px-3 py-2.5 font-mono text-xs text-secondary">{item.run.model || item.run.request_model || '—'}</td>
+              <td className="px-3 py-2.5">
+                <DiagnosticStatusBadge item={item} />
+                {!item.usable && item.run.run_status_reason ? (
+                  <div className="mt-1 max-w-[14rem] text-xs leading-relaxed text-amber-300">{item.run.run_status_reason}</div>
+                ) : null}
+              </td>
+              <td className="px-3 py-2.5 text-right">
+                {item.score ? (
+                  <span
+                    className="inline-block min-w-[2.75rem] rounded-md px-2 py-0.5 font-mono font-bold text-[hsl(0_0%_100%)]"
+                    style={{ backgroundColor: scoreColor(item.score.overall_score) }}
                   >
-                    {diagnosticActionText(item)}
-                    <ExternalLink size={12} />
-                  </a>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-function DiagnosticFilterSummary({
-  provider,
-  service,
-  channel,
-  model,
-}: {
-  provider?: string;
-  service?: string;
-  channel?: string;
-  model?: string;
-}) {
-  const chips = [
-    ['服务商', provider],
-    ['服务', service],
-    ['通道', channel],
-    ['模型', model],
-  ].filter(([, value]) => Boolean(value));
-
-  return (
-    <div className="rounded-xl border border-default bg-surface px-4 py-3">
-      <div className="mb-2 text-sm font-semibold text-primary">当前检测历史筛选</div>
-      <div className="flex flex-wrap gap-2">
-        {chips.map(([label, value]) => (
-          <span key={`${label}-${value}`} className="inline-flex max-w-full items-center gap-1 rounded-full border border-default/70 bg-elevated/60 px-2.5 py-1 text-xs text-secondary">
-            <span className="text-muted">{label}</span>
-            <span className="truncate font-mono text-primary">{value}</span>
-          </span>
-        ))}
-      </div>
+                    {item.score.overall_score.toFixed(0)}
+                  </span>
+                ) : (
+                  <span className="text-muted">—</span>
+                )}
+              </td>
+              <td className="px-3 py-2.5 text-right">
+                <a
+                  href={evidenceHref(item.run.run_id)}
+                  className="inline-flex items-center gap-1 text-accent hover:underline whitespace-nowrap"
+                >
+                  {diagnosticActionText(item)}
+                  <ExternalLink size={12} />
+                </a>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
