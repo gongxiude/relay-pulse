@@ -276,15 +276,17 @@ type auditModelStatusMetaResponse struct {
 }
 
 type auditModelStatusItemResponse struct {
-	Provider      string                           `json:"provider"`
-	Service       string                           `json:"service"`
-	Channel       string                           `json:"channel"`
-	Model         string                           `json:"model"`
-	RequestModel  string                           `json:"request_model"`
-	Enabled       bool                             `json:"enabled"`
-	Production    auditProductionStatusResponse    `json:"production"`
-	TemplateProbe auditTemplateProbeStatusResponse `json:"template_probe"`
-	QuickProbe    auditQuickProbeStatusResponse    `json:"quick_probe"`
+	Provider             string                           `json:"provider"`
+	Service              string                           `json:"service"`
+	Channel              string                           `json:"channel"`
+	Model                string                           `json:"model"`
+	RequestModel         string                           `json:"request_model"`
+	Enabled              bool                             `json:"enabled"`
+	CredentialConfigured bool                             `json:"credential_configured"`
+	CredentialLast4      string                           `json:"credential_last4,omitempty"`
+	Production           auditProductionStatusResponse    `json:"production"`
+	TemplateProbe        auditTemplateProbeStatusResponse `json:"template_probe"`
+	QuickProbe           auditQuickProbeStatusResponse    `json:"quick_probe"`
 }
 
 type auditProductionStatusResponse struct {

@@ -151,6 +151,31 @@ func TestAuditTargetCredentialAPIHidesPlaintextKey(t *testing.T) {
 	}
 }
 
+func TestAuditTargetsResponseDoesNotExposeAPIKey(t *testing.T) {
+	store := newAuditTestStore(t)
+	if err := store.ReplaceAuditTargets([]storage.AuditTarget{{
+		Provider:     "p1",
+		Service:      "cc",
+		Channel:      "101:demo",
+		Model:        "m1",
+		RequestModel: "m1",
+		Enabled:      true,
+		APIKey:       "sk-secret-1234",
+	}}); err != nil {
+		t.Fatalf("ReplaceAuditTargets: %v", err)
+	}
+	router := newAuditTestRouter(t, store, &config.AppConfig{})
+	req := httptest.NewRequest(http.MethodGet, "/api/audit/targets", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("targets unexpected: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "sk-secret-1234") {
+		t.Fatalf("targets leaked key: %s", rec.Body.String())
+	}
+}
+
 func TestAuditSyncEndpointsAndReads(t *testing.T) {
 	store := newAuditTestStore(t)
 	mapJSON := `{"gpt-4o":"gpt-4o"}`
@@ -675,6 +700,7 @@ func TestAuditModelStatusSeparatesSources(t *testing.T) {
 		Model:        "gpt-4o",
 		RequestModel: "gpt-4o",
 		Enabled:      true,
+		APIKey:       "sk-status-1234",
 	}
 	if err := store.ReplaceAuditTargets([]storage.AuditTarget{target}); err != nil {
 		t.Fatalf("ReplaceAuditTargets: %v", err)
@@ -749,6 +775,9 @@ func TestAuditModelStatusSeparatesSources(t *testing.T) {
 	item := resp.Data.Items[0]
 	if item.Production.Source != "production_logs" || item.Production.Status != "ok" || item.Production.Total != 1 {
 		t.Fatalf("unexpected production status: %+v", item.Production)
+	}
+	if !item.CredentialConfigured || item.CredentialLast4 != "1234" {
+		t.Fatalf("unexpected credential status: %+v", item)
 	}
 	if item.TemplateProbe.Source != "template_probe" || item.TemplateProbe.Status != "unavailable" || item.TemplateProbe.SubStatus != "auth_error" {
 		t.Fatalf("unexpected template probe status: %+v", item.TemplateProbe)

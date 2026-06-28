@@ -1532,6 +1532,17 @@ func windowDuration(window string) time.Duration {
 	}
 }
 
+func last4ForAPIResponse(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if len(value) <= 4 {
+		return value
+	}
+	return value[len(value)-4:]
+}
+
 func buildAuditRankingRows(targets []storage.AuditTarget, logs []storage.NewAPILog, window string, now time.Time) []auditRankingRow {
 	logMap := make(map[string][]audit.LogSpec)
 	for _, log := range logs {
@@ -1649,15 +1660,17 @@ func buildAuditModelStatusItems(store auditModelStatusStore, targets []storage.A
 			return nil, err
 		}
 		items = append(items, auditModelStatusItemResponse{
-			Provider:      target.Provider,
-			Service:       target.Service,
-			Channel:       target.Channel,
-			Model:         target.Model,
-			RequestModel:  target.RequestModel,
-			Enabled:       target.Enabled,
-			Production:    production,
-			TemplateProbe: templateProbe,
-			QuickProbe:    quickProbe,
+			Provider:             target.Provider,
+			Service:              target.Service,
+			Channel:              target.Channel,
+			Model:                target.Model,
+			RequestModel:         target.RequestModel,
+			Enabled:              target.Enabled,
+			CredentialConfigured: strings.TrimSpace(target.APIKey) != "",
+			CredentialLast4:      last4ForAPIResponse(target.APIKey),
+			Production:           production,
+			TemplateProbe:        templateProbe,
+			QuickProbe:           quickProbe,
 		})
 	}
 	return items, nil
