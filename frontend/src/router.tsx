@@ -75,6 +75,7 @@ function RouterFallback() {
  * - /status           → App（旧路径别名）
  * - /p/:provider      → ProviderPage（服务商详情页）
  * - /detect           → DetectPage（检测方法页，保留旧路径）
+ * - /detect/compare   → DetectPage（检测证据入口）
  */
 function renderChildRoutes() {
   return (
@@ -84,6 +85,7 @@ function renderChildRoutes() {
       <Route path="p/claudecn-gpt" element={<DetectPage />} />
       <Route path="p/:provider" element={<ProviderPage />} />
       <Route path="detect" element={<DetectPage />} />
+      <Route path="detect/compare" element={<DetectPage />} />
       <Route path="detect/compare/:runId" element={<DetectComparePage />} />
       <Route path="admin" element={<AdminPage />} />
     </>

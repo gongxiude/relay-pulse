@@ -39,12 +39,6 @@ export function useAuditDiagnosticLatest({
   }, [provider, service, channel, includeFiltered, limit]);
 
   useEffect(() => {
-    if (!provider || !service || !channel) {
-      setItems([]);
-      setLoading(false);
-      setError(null);
-      return;
-    }
     let cancelled = false;
     const controller = new AbortController();
 
@@ -69,7 +63,7 @@ export function useAuditDiagnosticLatest({
       cancelled = true;
       controller.abort();
     };
-  }, [provider, service, channel, query]);
+  }, [query]);
 
   return { items, loading, error };
 }

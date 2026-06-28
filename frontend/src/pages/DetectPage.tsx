@@ -13,9 +13,10 @@ import {
 import { Header } from '../components/Header';
 import { LANGUAGE_PATH_MAP, type SupportedLanguage } from '../i18n';
 import { useAuditMethodology } from '../hooks/useAuditMethodology';
+import { useAuditDiagnosticLatest } from '../hooks/useAuditDiagnosticLatest';
 import { useRpdiagScores, lookupRpdiagScore } from '../hooks/useRpdiagScores';
 import { useMonitorData } from '../hooks/useMonitorData';
-import type { AuditMethodologyDimension } from '../types/audit';
+import type { AuditDiagnosticLatestItem, AuditMethodologyDimension } from '../types/audit';
 
 /** 质量分色带：与 StatusTable.qualityScoreColor 同一套 hue 阶梯（红→翠绿）。
  *  StatusTable 内为私有函数，这里独立一份避免改动那个组件；阈值变更需两处同步。 */
@@ -211,6 +212,130 @@ function DimensionStatusBadge({ dimension }: { dimension: AuditMethodologyDimens
   return <span className="inline-flex rounded-full bg-slate-500/15 px-2.5 py-1 text-xs font-semibold text-slate-300">计划中</span>;
 }
 
+function formatEvidenceTime(timestamp?: number): string {
+  if (!timestamp) return '—';
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(timestamp * 1000));
+}
+
+function diagnosticStatusText(item: AuditDiagnosticLatestItem): string {
+  if (!item.usable) {
+    return item.run.run_status || item.filter_reason || item.run.status || '无效样本';
+  }
+  switch (item.run.status) {
+    case 'done':
+      return '已完成';
+    case 'failed_auth':
+      return '凭证失败';
+    case 'failed_request':
+      return '请求失败';
+    case 'running':
+      return '检测中';
+    default:
+      return item.run.status || '未知';
+  }
+}
+
+function diagnosticActionText(item: AuditDiagnosticLatestItem): string {
+  if (!item.usable) return '查看无效样本';
+  if (item.run.status && item.run.status !== 'done') return '查看失败详情';
+  return '查看检测证据';
+}
+
+function DiagnosticStatusBadge({ item }: { item: AuditDiagnosticLatestItem }) {
+  const status = item.run.status;
+  const text = diagnosticStatusText(item);
+  if (!item.usable) {
+    return <span className="inline-flex rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-semibold text-amber-300">{text}</span>;
+  }
+  if (status === 'done') {
+    return <span className="inline-flex rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-300">{text}</span>;
+  }
+  if (status === 'failed_auth' || status === 'failed_request') {
+    return <span className="inline-flex rounded-full bg-red-500/15 px-2.5 py-1 text-xs font-semibold text-red-300">{text}</span>;
+  }
+  return <span className="inline-flex rounded-full bg-slate-500/15 px-2.5 py-1 text-xs font-semibold text-slate-300">{text}</span>;
+}
+
+function LatestDiagnosticEvidence() {
+  const { i18n } = useTranslation();
+  const langPrefix = LANGUAGE_PATH_MAP[i18n.language as SupportedLanguage];
+  const { items, loading, error } = useAuditDiagnosticLatest({
+    includeFiltered: true,
+    limit: 10,
+  });
+  const evidenceHref = (runId: string) => (langPrefix ? `/${langPrefix}/detect/compare/${runId}` : `/detect/compare/${runId}`);
+
+  if (loading && items.length === 0) {
+    return <div className="rounded-xl border border-default bg-surface p-5 text-sm text-muted">正在加载最近检测证据…</div>;
+  }
+  if (error) {
+    return <div className="rounded-xl border border-danger/30 bg-danger/5 p-5 text-sm text-danger">加载最近检测证据失败：{error}</div>;
+  }
+  if (items.length === 0) {
+    return <div className="rounded-xl border border-default bg-surface p-5 text-sm text-muted">当前还没有检测证据。完成一次 quick-probe 后会显示在这里。</div>;
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-2xl border border-default bg-surface">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-muted border-b border-default/60">
+            <th className="px-3 py-3 font-medium whitespace-nowrap">时间</th>
+            <th className="px-3 py-3 font-medium">服务商</th>
+            <th className="px-3 py-3 font-medium">通道</th>
+            <th className="px-3 py-3 font-medium">模型</th>
+            <th className="px-3 py-3 font-medium">状态</th>
+            <th className="px-3 py-3 font-medium text-right">分数</th>
+            <th className="px-3 py-3 font-medium text-right">证据</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item) => (
+            <tr key={item.run.run_id} className="border-b border-default/30 hover:bg-elevated/40 transition-colors last:border-b-0">
+              <td className="px-3 py-2.5 font-mono text-xs text-muted whitespace-nowrap">{formatEvidenceTime(item.run.created_at)}</td>
+              <td className="px-3 py-2.5 text-primary font-medium">{item.run.provider || '—'}</td>
+              <td className="px-3 py-2.5 text-secondary">{item.run.channel || '—'}</td>
+              <td className="px-3 py-2.5 font-mono text-xs text-secondary">{item.run.model || item.run.request_model || '—'}</td>
+              <td className="px-3 py-2.5">
+                <DiagnosticStatusBadge item={item} />
+                {!item.usable && item.run.run_status_reason ? (
+                  <div className="mt-1 max-w-[14rem] text-xs leading-relaxed text-amber-300">{item.run.run_status_reason}</div>
+                ) : null}
+              </td>
+              <td className="px-3 py-2.5 text-right">
+                {item.score ? (
+                  <span
+                    className="inline-block min-w-[2.75rem] rounded-md px-2 py-0.5 font-mono font-bold text-[hsl(0_0%_100%)]"
+                    style={{ backgroundColor: scoreColor(item.score.overall_score) }}
+                  >
+                    {item.score.overall_score.toFixed(0)}
+                  </span>
+                ) : (
+                  <span className="text-muted">—</span>
+                )}
+              </td>
+              <td className="px-3 py-2.5 text-right">
+                <a
+                  href={evidenceHref(item.run.run_id)}
+                  className="inline-flex items-center gap-1 text-accent hover:underline whitespace-nowrap"
+                >
+                  {diagnosticActionText(item)}
+                  <ExternalLink size={12} />
+                </a>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export default function DetectPage() {
   const { t } = useTranslation();
   const { data: methodology, loading: methodologyLoading, error: methodologyError } = useAuditMethodology();
@@ -317,6 +442,10 @@ export default function DetectPage() {
             ) : (
               <div className="rounded-xl border border-default bg-surface p-5 text-sm text-muted">当前还没有可展示的方法数据。</div>
             )}
+          </Section>
+
+          <Section icon={ListChecks} title="最近检测证据">
+            <LatestDiagnosticEvidence />
           </Section>
 
           {/* ① 什么是中转站检测 */}
