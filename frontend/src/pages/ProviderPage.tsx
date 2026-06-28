@@ -39,6 +39,7 @@ interface ModelDetailRow {
   enabled: boolean;
   latestRunId?: string | null;
   compareUrl?: string | null;
+  historyUrl: string;
   latestMethodologyVersion?: string | null;
   latestAttemptStatus?: string | null;
   latestAttemptReason?: string | null;
@@ -339,6 +340,11 @@ export default function ProviderPage() {
         const localCompareUrl = latestAttemptRunId
           ? `${langPrefix}/detect/compare/${latestAttemptRunId}`
           : null;
+        const historyParams = new URLSearchParams();
+        historyParams.set('provider', currentSnapshot.provider);
+        historyParams.set('service', sourceStatus?.service || currentSnapshot.service || selectedService);
+        historyParams.set('channel', currentSnapshot.channel);
+        historyParams.set('model', modelName);
         return {
           id: `${currentSnapshot.newapi_channel_id}-${modelName}`,
           modelName,
@@ -353,6 +359,7 @@ export default function ProviderPage() {
           enabled: currentSnapshot.enabled,
           latestRunId: latestAttemptRunId,
           compareUrl: localCompareUrl,
+          historyUrl: `${langPrefix}/detect/compare?${historyParams.toString()}`,
           latestMethodologyVersion: latestDiagnostic?.score?.methodology_version ?? latestDiagnostic?.run.methodology_version ?? null,
           latestAttemptStatus: latestAttempt?.usable
             ? (latestAttempt?.run.run_status ?? latestAttempt?.run.status ?? null)
@@ -430,7 +437,7 @@ export default function ProviderPage() {
         <title>{pageTitle}</title>
         <meta
           name="description"
-          content={`${providerDisplayName} 的模型级详情页。当前页按真实同步通道展开，并展示每个模型的状态、最近检测状态和可用率趋势。`}
+          content={`${providerDisplayName} 的模型级详情页。当前页展示每个模型的启停状态、最近检测状态和可用率趋势。`}
         />
       </Helmet>
 
@@ -450,7 +457,7 @@ export default function ProviderPage() {
               {currentSnapshot ? <SnapshotStatusBadge snapshot={currentSnapshot} /> : null}
             </div>
             <p className="mt-3 text-secondary text-base leading-relaxed">
-              当前页只使用 `new-api` 同步的真实渠道快照。先选中当前要看的通道，再按模型查看启停状态、最近检测状态和可用率趋势。
+              数据来自 `new-api` 同步快照；模型表格展示启停状态、最近检测状态和可用率趋势。
             </p>
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <span className="text-sm text-secondary">服务视图</span>
@@ -487,112 +494,12 @@ export default function ProviderPage() {
             </div>
           </section>
 
-          <section className="mb-4 rounded-2xl border border-default/70 bg-surface/55 px-4 py-4">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-semibold text-primary">同步通道</h2>
-                <p className="mt-1 text-sm text-secondary">
-                  下列通道全部来自 `new-api` 同步快照。先选定当前通道，再查看该通道下每个模型的状态。
-                </p>
-              </div>
-              <div className="text-xs text-muted">
-                当前类型：{currentSnapshot?.channelTypeLabel || currentSourceMeta?.label || '未知'}
-              </div>
-            </div>
-
-            <div className="grid gap-3 lg:grid-cols-2">
-              {sourceFilteredSnapshots.map((snapshot) => {
-                const active = snapshot.channel === selectedChannel;
-                const modelsCount = splitModels(snapshot.model).length;
-                return (
-                  <button
-                    key={snapshot.channel}
-                    type="button"
-                    onClick={() => updateParam(setSearchParams, searchParams, { channel: snapshot.channel, model: undefined })}
-                    className={`rounded-xl border px-4 py-4 text-left transition ${
-                      active
-                        ? 'border-accent bg-accent/10 shadow-sm'
-                        : 'border-default/70 bg-surface/65 hover:bg-elevated/45'
-                    }`}
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <div className="font-medium text-primary">{extractAuditChannelName(snapshot.channel)}</div>
-                        <div className="mt-1 text-xs text-secondary">{snapshot.channel}</div>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="inline-flex items-center rounded-full border border-default/70 bg-surface/70 px-2.5 py-1 text-xs text-secondary">
-                          {snapshot.channelTypeLabel || inferSourceKey(snapshot)}
-                        </span>
-                        <SnapshotStatusBadge snapshot={snapshot} compact />
-                      </div>
-                    </div>
-                    <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
-                      <span>模型 {modelsCount}</span>
-                      <span>分组 {snapshot.service || '--'}</span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-
-          <section className="mb-4 grid gap-4 lg:grid-cols-4 md:grid-cols-2">
-            <SummaryCard
-              label="当前通道"
-              value={currentSnapshot ? extractAuditChannelName(currentSnapshot.channel) : '--'}
-              hint={currentSnapshot?.channel || '未选定通道'}
-            />
-            <SummaryCard
-              label="当前状态"
-              value={currentSnapshot ? <SnapshotStatusBadge snapshot={currentSnapshot} compact /> : '--'}
-              hint={currentSnapshot?.channelTypeLabel || '以同步快照为准'}
-            />
-            <SummaryCard
-              label="模型数量"
-              value={String(modelRows.length)}
-              hint={selectedModel === 'all' ? '当前通道全部模型' : selectedModel}
-            />
-            <SummaryCard
-              label="同步分组"
-              value={currentServiceGroup}
-              hint={`当前服务视图：${currentServiceViewLabel}`}
-            />
-          </section>
-
           <section className="mb-4 rounded-2xl border border-default/70 bg-surface/55 px-4 py-3 text-sm text-secondary">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
               <span>最近有效样本 {diagnosticSummary.usable}</span>
               <span>401失败 {diagnosticSummary.failedAuth}</span>
               <span>请求失败 {diagnosticSummary.failedRequest}</span>
               <span>其他 {diagnosticSummary.pending}</span>
-            </div>
-          </section>
-
-          <section className="mb-4 rounded-2xl border border-default/70 bg-surface/55 px-4 py-4">
-            <div className="mb-3 text-sm font-semibold text-primary">筛选当前详情</div>
-            <div className="grid gap-4 md:grid-cols-3">
-              <FilterField
-                label="通道类型"
-                value={selectedSource}
-                onChange={(value) => updateParam(setSearchParams, searchParams, { source: value === 'all' ? undefined : value, channel: undefined, model: undefined })}
-                options={sourceOptions.map((option) => ({
-                  value: option,
-                  label: option === 'all' ? '全部类型' : SOURCE_META[option as Exclude<SourceKey, 'all'>].label,
-                }))}
-              />
-              <FilterField
-                label="通道"
-                value={selectedChannel}
-                onChange={(value) => updateParam(setSearchParams, searchParams, { channel: value, model: undefined })}
-                options={channelOptions}
-              />
-              <FilterField
-                label="模型"
-                value={selectedModel}
-                onChange={(value) => updateParam(setSearchParams, searchParams, { model: value === 'all' ? undefined : value })}
-                options={[{ value: 'all', label: '全部模型' }, ...modelOptions.map((model) => ({ value: model, label: model }))]}
-              />
             </div>
           </section>
 
@@ -611,19 +518,25 @@ export default function ProviderPage() {
           )}
 
           <section className="mb-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <h2 className="text-lg font-semibold text-primary">模型状态</h2>
                 <p className="mt-1 text-sm text-secondary">
                   当前表格按模型展开，优先展示模型是否启用、最近检测状态和可用率趋势。
                 </p>
-              </div>
-              {currentSourceMeta ? (
-                <div className="inline-flex items-center gap-2 rounded-full border border-default/70 bg-surface/70 px-3 py-1 text-xs text-secondary">
-                  {currentSourceMeta.icon}
-                  <span>{currentSnapshot?.channelTypeLabel || currentSourceMeta.label}</span>
+                <div className="mt-2 text-xs text-muted">
+                  模型数量 {modelRows.length}
+                  {selectedModel !== 'all' ? ` / 当前筛选 ${selectedModel}` : ''}
                 </div>
-              ) : null}
+              </div>
+              <div className="w-full sm:w-80">
+                <FilterField
+                  label="模型"
+                  value={selectedModel}
+                  onChange={(value) => updateParam(setSearchParams, searchParams, { model: value === 'all' ? undefined : value })}
+                  options={[{ value: 'all', label: '全部模型' }, ...modelOptions.map((model) => ({ value: model, label: model }))]}
+                />
+              </div>
             </div>
           </section>
 
@@ -723,22 +636,24 @@ export default function ProviderPage() {
                       </td>
                       <td className="px-4 py-4">
                         <div className="flex flex-col items-start gap-2">
+                          <a
+                            href={row.historyUrl}
+                            className="inline-flex items-center rounded-md bg-blue-500/15 px-2 py-1 text-xs font-semibold text-blue-300 hover:bg-blue-500/20"
+                          >
+                            检测历史
+                          </a>
                           {row.compareUrl ? (
                             <a
                               href={row.compareUrl}
                               target="_blank"
                               rel="noreferrer"
-                              className="inline-flex items-center rounded-md bg-blue-500/15 px-2 py-1 text-xs font-semibold text-blue-300 hover:bg-blue-500/20"
+                              className="inline-flex items-center rounded-md border border-default/70 px-2 py-1 text-xs font-medium text-secondary hover:bg-elevated/60 hover:text-primary"
                             >
                               {row.latestAttemptStatus && row.latestAttemptStatus !== 'done'
                                 ? '失败详情'
-                                : (row.latestMethodologyVersion || '查看结果')}
+                                : (row.latestMethodologyVersion || '最新证据')}
                             </a>
-                          ) : (
-                            <span className="text-muted text-sm">
-                              {showProbeWarning ? '等待有效样本' : '暂无'}
-                            </span>
-                          )}
+                          ) : null}
                           <div className="text-xs text-muted">
                             测试数 {row.testsCount ?? '--'}
                             {row.avgLatencyMs != null ? ` / 均延迟 ${formatLatency(row.avgLatencyMs)}` : ''}
@@ -798,16 +713,6 @@ function FilterField({
         ))}
       </select>
     </label>
-  );
-}
-
-function SummaryCard({ label, value, hint }: { label: string; value: React.ReactNode; hint?: string }) {
-  return (
-    <div className="rounded-xl border border-default/70 bg-surface/70 px-4 py-4">
-      <div className="text-sm text-secondary">{label}</div>
-      <div className="mt-2 text-xl font-semibold text-primary break-all">{value}</div>
-      {hint ? <div className="mt-1 text-xs leading-relaxed text-muted">{hint}</div> : null}
-    </div>
   );
 }
 
