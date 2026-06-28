@@ -74,7 +74,7 @@ No changes:
 - Create: `frontend/src/utils/auditModelStatusSummary.test.ts`
 - Modify: `frontend/src/types/index.ts`
 
-- [ ] **Step 1: Add processed row audit summary types**
+- [x] **Step 1: Add processed row audit summary types**
 
 In `frontend/src/types/index.ts`, add this interface near `ProcessedMonitorData` related interfaces:
 
@@ -108,7 +108,7 @@ Then add this optional field to `ProcessedMonitorData`:
   auditSummary?: AuditDisplaySummary | null;
 ```
 
-- [ ] **Step 2: Write the failing aggregator test**
+- [x] **Step 2: Write the failing aggregator test**
 
 Create `frontend/src/utils/auditModelStatusSummary.test.ts`:
 
@@ -243,7 +243,7 @@ describe('aggregateAuditModelStatusForChannels', () => {
 });
 ```
 
-- [ ] **Step 3: Run the failing test**
+- [x] **Step 3: Run the failing test**
 
 Run:
 
@@ -259,7 +259,7 @@ FAIL  src/utils/auditModelStatusSummary.test.ts
 Error: Cannot find module './auditModelStatusSummary'
 ```
 
-- [ ] **Step 4: Implement the aggregator**
+- [x] **Step 4: Implement the aggregator**
 
 Create `frontend/src/utils/auditModelStatusSummary.ts`:
 
@@ -451,7 +451,7 @@ function roundAvailability(value: number): number {
 }
 ```
 
-- [ ] **Step 5: Run the aggregator test**
+- [x] **Step 5: Run the aggregator test**
 
 Run:
 
@@ -466,7 +466,7 @@ Expected:
 PASS  src/utils/auditModelStatusSummary.test.ts
 ```
 
-- [ ] **Step 6: Commit Task 1**
+- [x] **Step 6: Commit Task 1**
 
 Run:
 
@@ -483,7 +483,7 @@ git commit -m "test(frontend): aggregate audit model status summaries"
 - Modify: `frontend/src/hooks/useAuditModelStatus.ts`
 - Test: `frontend/src/hooks/useAuditModelStatus.test.ts`
 
-- [ ] **Step 1: Write hook behavior test**
+- [x] **Step 1: Write hook behavior test**
 
 Create `frontend/src/hooks/useAuditModelStatus.test.ts`:
 
@@ -531,7 +531,7 @@ describe('model status query', () => {
 
 This test intentionally duplicates the query helper first. Step 3 will move the helper into production code and update the test import.
 
-- [ ] **Step 2: Run the test**
+- [x] **Step 2: Run the test**
 
 Run:
 
@@ -546,7 +546,7 @@ Expected:
 PASS  src/hooks/useAuditModelStatus.test.ts
 ```
 
-- [ ] **Step 3: Export the shared query builder and add global hook**
+- [x] **Step 3: Export the shared query builder and add global hook**
 
 In `frontend/src/hooks/useAuditModelStatus.ts`, add:
 
@@ -623,7 +623,7 @@ export function useAuditModelStatusSummary({
 }
 ```
 
-- [ ] **Step 4: Update the test to import production query builder**
+- [x] **Step 4: Update the test to import production query builder**
 
 Replace `frontend/src/hooks/useAuditModelStatus.test.ts` with:
 
@@ -652,7 +652,7 @@ describe('buildAuditModelStatusQuery', () => {
 });
 ```
 
-- [ ] **Step 5: Run hook test**
+- [x] **Step 5: Run hook test**
 
 Run:
 
@@ -667,7 +667,7 @@ Expected:
 PASS  src/hooks/useAuditModelStatus.test.ts
 ```
 
-- [ ] **Step 6: Commit Task 2**
+- [x] **Step 6: Commit Task 2**
 
 Run:
 
@@ -684,7 +684,7 @@ git commit -m "feat(frontend): fetch global audit model status summary"
 - Modify: `frontend/src/App.tsx`
 - Test: `frontend/src/utils/auditModelStatusSummary.test.ts`
 
-- [ ] **Step 1: Import the summary hook and aggregator**
+- [x] **Step 1: Import the summary hook and aggregator**
 
 In `frontend/src/App.tsx`, change:
 
@@ -711,7 +711,7 @@ import {
 } from './utils/auditModelStatusSummary';
 ```
 
-- [ ] **Step 2: Fetch global model-status summary**
+- [x] **Step 2: Fetch global model-status summary**
 
 In `App()`, after `useAuditChannels()`, add:
 
@@ -724,7 +724,7 @@ In `App()`, after `useAuditChannels()`, add:
   } = useAuditModelStatusSummary({ window: '24h' });
 ```
 
-- [ ] **Step 3: Build summary indexes**
+- [x] **Step 3: Build summary indexes**
 
 After `rows` is defined, add:
 
@@ -734,7 +734,7 @@ After `rows` is defined, add:
   }, [auditChannels, auditStatusItems]);
 ```
 
-- [ ] **Step 4: Overlay channel summaries before provider aggregation**
+- [x] **Step 4: Overlay channel summaries before provider aggregation**
 
 Replace:
 
@@ -777,7 +777,7 @@ function inferAuditServiceForHome(row: ProcessedMonitorData): string {
 }
 ```
 
-- [ ] **Step 5: Update provider aggregation to preserve summary**
+- [x] **Step 5: Update provider aggregation to preserve summary**
 
 Change the signature:
 
@@ -817,7 +817,7 @@ with:
       history: primary.history.length > 0 ? primary.history : buildAuditDisplayHistory(providerSummary ?? primary.auditSummary),
 ```
 
-- [ ] **Step 6: Add home summary counters**
+- [x] **Step 6: Add home summary counters**
 
 Before `return`, add:
 
@@ -842,7 +842,7 @@ with:
               <span>Baseline 对比 {auditSummary?.baseline_compared ?? 0}</span>
 ```
 
-- [ ] **Step 7: Include global audit loading/error in page state**
+- [x] **Step 7: Include global audit loading/error in page state**
 
 Replace:
 
@@ -858,7 +858,7 @@ with:
   const loading = auditChannelsLoading || monitorLoading || auditStatusLoading;
 ```
 
-- [ ] **Step 8: Run frontend tests**
+- [x] **Step 8: Run frontend tests**
 
 Run:
 
@@ -873,7 +873,7 @@ Expected:
 PASS
 ```
 
-- [ ] **Step 9: Run frontend build**
+- [x] **Step 9: Run frontend build**
 
 Run:
 
@@ -888,7 +888,7 @@ Expected:
 ✓ built
 ```
 
-- [ ] **Step 10: Commit Task 3**
+- [x] **Step 10: Commit Task 3**
 
 Run:
 
@@ -904,7 +904,7 @@ git commit -m "feat(frontend): show audit summaries on home page"
 **Files:**
 - Modify: `docs/superpowers/plans/2026-06-28-public-page-data-closure.md`
 
-- [ ] **Step 1: Run backend tests**
+- [x] **Step 1: Run backend tests**
 
 Run:
 
@@ -921,7 +921,7 @@ ok  	monitor/internal/storage
 ok  	monitor/internal/config
 ```
 
-- [ ] **Step 2: Refresh local embedded frontend**
+- [x] **Step 2: Refresh local embedded frontend**
 
 Run:
 
@@ -937,7 +937,7 @@ go build -o /tmp/relay-pulse-server ./cmd/server
 
 Expected: all commands exit 0.
 
-- [ ] **Step 3: Restart local server on 18080**
+- [x] **Step 3: Restart local server on 18080**
 
 Run:
 
@@ -956,7 +956,7 @@ Expected:
 200
 ```
 
-- [ ] **Step 4: Verify global model-status returns real data**
+- [x] **Step 4: Verify global model-status returns real data**
 
 Run:
 
@@ -966,7 +966,7 @@ curl -sS 'http://127.0.0.1:18080/api/audit/model-status?window=24h' | jq -c '{co
 
 Expected: `count` is greater than 0 and `summary.production_total` is greater than 0 on the current local SQLite database.
 
-- [ ] **Step 5: Verify home page asset contains audit summary labels**
+- [x] **Step 5: Verify home page asset contains audit summary labels**
 
 Run:
 
@@ -983,7 +983,7 @@ Baseline 对比
 生产日志样本
 ```
 
-- [ ] **Step 6: Verify provider page still uses real audit service**
+- [x] **Step 6: Verify provider page still uses real audit service**
 
 Run:
 
@@ -999,7 +999,7 @@ Expected:
 5
 ```
 
-- [ ] **Step 7: Update this plan with observed verification results**
+- [x] **Step 7: Update this plan with observed verification results**
 
 Add a short `## Execution Record` section at the bottom with:
 
@@ -1017,7 +1017,7 @@ Add a short `## Execution Record` section at the bottom with:
 
 Fill each line with exact observed output summary.
 
-- [ ] **Step 8: Commit Task 4**
+- [x] **Step 8: Commit Task 4**
 
 Run:
 
@@ -1026,7 +1026,7 @@ git add docs/superpowers/plans/2026-06-28-public-page-data-closure.md
 git commit -m "docs: record public page data closure verification"
 ```
 
-- [ ] **Step 9: Push main**
+- [x] **Step 9: Push main**
 
 Run:
 
@@ -1057,3 +1057,18 @@ Known boundaries:
 
 - 首页趋势使用现有 `/api/status` 历史优先；当旧模板历史缺失时，用 24h 审计汇总生成简化趋势占位，避免空白。
 - 长周期 7d/30d 生产日志趋势不在本计划内，属于后续 V1.1 趋势增强。
+
+## Execution Record
+
+- Plan commit: `e0735d7 docs: add public page data closure plan`
+- Task 1 commit: `e90791f test(frontend): aggregate audit model status summaries`
+- Task 2 commit: `e839448 feat(frontend): fetch global audit model status summary`
+- Task 3 commit: `03ffb0b feat(frontend): show audit summaries on home page`
+- Frontend tests: `npm test -- src/utils/auditModelStatusSummary.test.ts src/hooks/useAuditModelStatus.test.ts src/utils/auditServiceBoundary.test.ts` passed, 3 files / 7 tests.
+- Frontend build: `npm run build` passed, Vite built `App-B4i4MD7l.js` and `ProviderPage-BYgyXhUZ.js`.
+- Go tests: `go test ./internal/api ./internal/audit ./internal/storage ./internal/config` passed.
+- Local server: `PORT=18080 /tmp/relay-pulse-server config.yaml` running in tmux session `relay-pulse-18080`; `/health` returned `200`.
+- Global model-status: `/api/audit/model-status?window=24h` returned `count=133`, `production_total=1775`, `production_success_rate=100`, `quick_probe_done=1`, `quick_probe_failed=5`, `quick_probe_missing=127`, `baseline_compared=4`.
+- Home asset verification: `assets/App-B4i4MD7l.js` contains `生产日志样本`、`模板样本`、`Baseline 对比`.
+- Provider service-boundary: `alan-官key直连` with `service=cc` returned `0`; with `service=anthropic` returned `5`.
+- Render verification: headless Chrome rendered `/` with `服务商列表`、`生产日志样本`、`模板样本`、`Baseline 对比`; rendered provider page with `整体模板可用率`、`正常请求`、`超时 / 无响应`、`模型状态`、`检测历史`.
