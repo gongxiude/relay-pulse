@@ -1,5 +1,5 @@
 import type { AuditChannelSnapshot, AuditModelStatusItem } from '../types/audit';
-import type { AuditDisplaySummary, StatusKey } from '../types';
+import type { AuditDisplaySummary, StatusCounts, StatusKey } from '../types';
 import { canonicalize } from './monitorDataProcessor';
 import { inferAuditServiceType } from './auditChannelAdapter';
 
@@ -158,7 +158,7 @@ export function buildAuditDisplayHistory(summary?: AuditDisplaySummary | null): 
   timestampNum: number;
   latency: number;
   availability: number;
-  statusCounts: { available: number; unavailable: number; degraded: number; missing: number };
+  statusCounts: StatusCounts;
 }> {
   const availability = chooseAuditDisplayAvailability(summary);
   if (availability < 0) return [];
@@ -173,9 +173,18 @@ export function buildAuditDisplayHistory(summary?: AuditDisplaySummary | null): 
     availability,
     statusCounts: {
       available: status === 'AVAILABLE' ? 1 : 0,
-      unavailable: status === 'UNAVAILABLE' ? 1 : 0,
       degraded: status === 'DEGRADED' ? 1 : 0,
+      unavailable: status === 'UNAVAILABLE' ? 1 : 0,
       missing: 0,
+      slow_latency: 0,
+      rate_limit: 0,
+      server_error: 0,
+      client_error: 0,
+      auth_error: 0,
+      invalid_request: 0,
+      network_error: 0,
+      response_timeout: 0,
+      content_mismatch: 0,
     },
   }));
 }

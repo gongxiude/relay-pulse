@@ -7,15 +7,26 @@ import { useTranslation } from 'react-i18next';
 import { Header } from './components/Header';
 import { StatusTable } from './components/StatusTable';
 import { useAuditChannels } from './hooks/useAuditChannels';
+import { useAuditModelStatusSummary } from './hooks/useAuditModelStatus';
 import { useMonitorData } from './hooks/useMonitorData';
 import { useRpdiagScores } from './hooks/useRpdiagScores';
 import { useSeoMeta } from './hooks/useSeoMeta';
 import { adaptAuditChannelsToMonitorData, buildAuditStatusIndex } from './utils/auditChannelAdapter';
 import type { ProcessedMonitorData, SortConfig } from './types';
+import {
+  aggregateAuditModelStatusForChannels,
+  buildAuditChannelSummaryKey,
+  buildAuditDisplayHistory,
+  buildAuditProviderSummaryKey,
+  chooseAuditDisplayAvailability,
+} from './utils/auditModelStatusSummary';
 
 const EMPTY_TOOLTIP_HANDLER = () => {};
 
-function aggregateProviderRows(rows: ProcessedMonitorData[]): ProcessedMonitorData[] {
+function aggregateProviderRows(
+  rows: ProcessedMonitorData[],
+  providerSummaries = new Map<string, NonNullable<ProcessedMonitorData['auditSummary']>>(),
+): ProcessedMonitorData[] {
   const groups = new Map<string, ProcessedMonitorData[]>();
 
   rows.forEach((row) => {
@@ -41,6 +52,10 @@ function aggregateProviderRows(rows: ProcessedMonitorData[]): ProcessedMonitorDa
     const aggregateUptime = uptimeValues.length > 0
       ? uptimeValues.reduce((sum, value) => sum + value, 0) / uptimeValues.length
       : -1;
+    const providerSummary = providerSummaries.get(
+      buildAuditProviderSummaryKey(primary.providerName, primary.serviceType),
+    );
+    const auditAvailability = chooseAuditDisplayAvailability(providerSummary);
 
     return {
       ...primary,
@@ -48,11 +63,20 @@ function aggregateProviderRows(rows: ProcessedMonitorData[]): ProcessedMonitorDa
       channel: primary.channel,
       channelName: items.length > 1 ? `${items.length} 条通道` : (primary.channelName || primary.channel),
       newApiStatusLabel: items.length > 1 ? `${enabledCount}/${items.length} 已启用` : primary.newApiStatusLabel,
-      uptime: aggregateUptime,
+      auditSummary: providerSummary ?? primary.auditSummary ?? null,
+      uptime: auditAvailability >= 0 ? auditAvailability : aggregateUptime,
+      history: primary.history.length > 0 ? primary.history : buildAuditDisplayHistory(providerSummary ?? primary.auditSummary),
       isMultiModel: true,
       modelEntries: [],
     };
   });
+}
+
+function inferAuditServiceForHome(row: ProcessedMonitorData): string {
+  const text = `${row.serviceType} ${row.channel || ''} ${row.channelName || ''} ${row.providerName}`.toLowerCase();
+  if (text.includes('claude') || text.includes('anthropic') || row.serviceType === 'cc') return 'anthropic';
+  if (text.includes('gemini') || text.includes('google') || row.serviceType === 'gm') return 'gemini';
+  return 'openai';
 }
 
 function sortRows(data: ProcessedMonitorData[], sortConfig: SortConfig): ProcessedMonitorData[] {
@@ -90,6 +114,12 @@ function App() {
   const { scores: rpdiagScores, loaded: rpdiagScoresLoaded } = useRpdiagScores();
   const { channels: auditChannels, loading: auditChannelsLoading, error: auditChannelsError } = useAuditChannels();
   const {
+    items: auditStatusItems,
+    meta: auditStatusMeta,
+    loading: auditStatusLoading,
+    error: auditStatusError,
+  } = useAuditModelStatusSummary({ window: '24h' });
+  const {
     rawData,
     loading: monitorLoading,
     error: monitorError,
@@ -115,7 +145,32 @@ function App() {
     return adaptAuditChannelsToMonitorData(auditChannels, monitorIndex);
   }, [auditChannels, rawData]);
 
-  const providerRows = useMemo(() => aggregateProviderRows(rows), [rows]);
+  const auditSummaryIndexes = useMemo(() => {
+    return aggregateAuditModelStatusForChannels(auditChannels, auditStatusItems);
+  }, [auditChannels, auditStatusItems]);
+
+  const rowsWithAuditSummary = useMemo(() => {
+    return rows.map((row) => {
+      const summary = auditSummaryIndexes.byChannel.get(
+        buildAuditChannelSummaryKey(row.providerName, row.auditSummary?.service || inferAuditServiceForHome(row), row.channel || ''),
+      );
+      const availability = chooseAuditDisplayAvailability(summary);
+      if (!summary || availability < 0) return row;
+      return {
+        ...row,
+        auditSummary: summary,
+        uptime: availability,
+        history: row.history.length > 0 ? row.history : buildAuditDisplayHistory(summary),
+        currentStatus:
+          availability >= 99.5 ? 'AVAILABLE' : availability > 0 ? 'DEGRADED' : 'UNAVAILABLE',
+      } satisfies ProcessedMonitorData;
+    });
+  }, [rows, auditSummaryIndexes]);
+
+  const providerRows = useMemo(
+    () => aggregateProviderRows(rowsWithAuditSummary, auditSummaryIndexes.byProvider),
+    [rowsWithAuditSummary, auditSummaryIndexes],
+  );
   const sortedRows = useMemo(() => sortRows(providerRows, sortConfig), [providerRows, sortConfig]);
 
   const headerStats = useMemo(() => {
@@ -128,8 +183,9 @@ function App() {
     };
   }, [providerRows]);
 
-  const effectiveError = auditChannelsError || monitorError;
-  const loading = auditChannelsLoading || monitorLoading;
+  const effectiveError = auditChannelsError || monitorError || auditStatusError;
+  const loading = auditChannelsLoading || monitorLoading || auditStatusLoading;
+  const auditSummary = auditStatusMeta?.summary;
 
   const handleSort = (key: string) => {
     setSortConfig((current) => {
@@ -169,6 +225,9 @@ function App() {
             <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-secondary">
               <span>服务商 {providerRows.length}</span>
               <span>同步通道 {rows.length}</span>
+              <span>生产日志样本 {auditSummary?.production_total ?? 0}</span>
+              <span>模板样本 {auditSummary?.template_probe_total ?? 0}</span>
+              <span>Baseline 对比 {auditSummary?.baseline_compared ?? 0}</span>
             </div>
           </section>
 
