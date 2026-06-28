@@ -190,6 +190,9 @@ func (s *PostgresStorage) Init() error {
 	if err := s.initAuditTables(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureAuditTargetsAPIKeyColumn(ctx); err != nil {
+		return err
+	}
 
 	return nil
 }

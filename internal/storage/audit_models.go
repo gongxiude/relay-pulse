@@ -63,6 +63,16 @@ type AuditTarget struct {
 	Weight       int    `json:"weight"`
 	Priority     int    `json:"priority"`
 	Enabled      bool   `json:"enabled"`
+	APIKey       string `json:"-"`
+}
+
+type AuditTargetCredentialUpdate struct {
+	Provider      string `json:"provider"`
+	Service       string `json:"service"`
+	Channel       string `json:"channel"`
+	Updated       int    `json:"updated"`
+	KeyConfigured bool   `json:"key_configured"`
+	KeyLast4      string `json:"key_last4"`
 }
 
 type DiagnosticRun struct {
@@ -206,6 +216,23 @@ func postgresDiagnosticRunWhere(filter DiagnosticRunFilter) ([]string, []any, in
 	return clauses, args, argIndex
 }
 
+func auditTargetKey(provider, service, channel, model string) string {
+	return strings.Join([]string{
+		strings.TrimSpace(provider),
+		strings.TrimSpace(service),
+		strings.TrimSpace(channel),
+		strings.TrimSpace(model),
+	}, "\x00")
+}
+
+func last4(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= 4 {
+		return value
+	}
+	return value[len(value)-4:]
+}
+
 type DiagnosticDimensionSummary struct {
 	RunCount       int `json:"run_count"`
 	DimensionCount int `json:"dimension_count"`
@@ -258,6 +285,7 @@ func (s *SQLiteStorage) initAuditTables(ctx context.Context) error {
 			weight INTEGER NOT NULL DEFAULT 0,
 			priority INTEGER NOT NULL DEFAULT 0,
 			enabled INTEGER NOT NULL DEFAULT 1,
+			api_key TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY (provider, service, channel, model)
 		);`,
 		`CREATE TABLE IF NOT EXISTS diagnostic_runs (
@@ -386,6 +414,7 @@ func (s *PostgresStorage) initAuditTables(ctx context.Context) error {
 			weight INTEGER NOT NULL DEFAULT 0,
 			priority INTEGER NOT NULL DEFAULT 0,
 			enabled BOOLEAN NOT NULL DEFAULT TRUE,
+			api_key TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY (provider, service, channel, model)
 		);`,
 		`CREATE TABLE IF NOT EXISTS diagnostic_runs (
@@ -463,6 +492,61 @@ func (s *PostgresStorage) initAuditTables(ctx context.Context) error {
 		if _, err := s.pool.Exec(ctx, stmt); err != nil {
 			return fmt.Errorf("创建审计表失败 (PostgreSQL): %w", err)
 		}
+	}
+	return nil
+}
+
+func (s *SQLiteStorage) ensureAuditTargetsAPIKeyColumn(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(audit_targets)`)
+	if err != nil {
+		return fmt.Errorf("读取 audit_targets 表结构失败: %w", err)
+	}
+	defer rows.Close()
+
+	hasColumn := false
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull int
+		var defaultValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return fmt.Errorf("扫描 audit_targets 表结构失败: %w", err)
+		}
+		if name == "api_key" {
+			hasColumn = true
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("遍历 audit_targets 表结构失败: %w", err)
+	}
+	if hasColumn {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE audit_targets ADD COLUMN api_key TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("为 audit_targets 增加 api_key 字段失败: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStorage) ensureAuditTargetsAPIKeyColumn(ctx context.Context) error {
+	var count int
+	err := s.pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM information_schema.columns
+		WHERE table_schema = current_schema()
+		  AND table_name = 'audit_targets'
+		  AND column_name = 'api_key'
+	`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("检查 audit_targets.api_key 字段失败 (PostgreSQL): %w", err)
+	}
+	if count > 0 {
+		return nil
+	}
+	if _, err := s.pool.Exec(ctx, `ALTER TABLE audit_targets ADD COLUMN api_key TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("为 audit_targets 增加 api_key 字段失败 (PostgreSQL): %w", err)
 	}
 	return nil
 }
@@ -1123,14 +1207,41 @@ func (s *SQLiteStorage) ReplaceAuditTargets(targets []AuditTarget) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	existingKeys := map[string]string{}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT provider, service, channel, model, api_key
+		FROM audit_targets
+		WHERE api_key != ''
+	`)
+	if err != nil {
+		return fmt.Errorf("读取已有审计目标凭证失败: %w", err)
+	}
+	for rows.Next() {
+		var provider, service, channel, model, apiKey string
+		if err := rows.Scan(&provider, &service, &channel, &model, &apiKey); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("扫描已有审计目标凭证失败: %w", err)
+		}
+		existingKeys[auditTargetKey(provider, service, channel, model)] = apiKey
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("关闭已有审计目标凭证查询失败: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("遍历已有审计目标凭证失败: %w", err)
+	}
+
 	if _, err := tx.ExecContext(ctx, `DELETE FROM audit_targets`); err != nil {
 		return fmt.Errorf("清空审计目标失败: %w", err)
 	}
 	for _, target := range targets {
+		if strings.TrimSpace(target.APIKey) == "" {
+			target.APIKey = existingKeys[auditTargetKey(target.Provider, target.Service, target.Channel, target.Model)]
+		}
 		_, err := tx.ExecContext(ctx, `
-			INSERT INTO audit_targets (provider, service, channel, model, request_model, "group", weight, priority, enabled)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, target.Provider, target.Service, target.Channel, target.Model, target.RequestModel, target.Group, target.Weight, target.Priority, target.Enabled)
+			INSERT INTO audit_targets (provider, service, channel, model, request_model, "group", weight, priority, enabled, api_key)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, target.Provider, target.Service, target.Channel, target.Model, target.RequestModel, target.Group, target.Weight, target.Priority, target.Enabled, target.APIKey)
 		if err != nil {
 			return fmt.Errorf("写入审计目标失败: %w", err)
 		}
@@ -1144,7 +1255,7 @@ func (s *SQLiteStorage) ReplaceAuditTargets(targets []AuditTarget) error {
 func (s *SQLiteStorage) ListAuditTargets() ([]AuditTarget, error) {
 	ctx := s.effectiveCtx()
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT provider, service, channel, model, request_model, "group", weight, priority, enabled
+		SELECT provider, service, channel, model, request_model, "group", weight, priority, enabled, api_key
 		FROM audit_targets
 		ORDER BY provider, service, channel, model
 	`)
@@ -1157,7 +1268,7 @@ func (s *SQLiteStorage) ListAuditTargets() ([]AuditTarget, error) {
 	for rows.Next() {
 		var target AuditTarget
 		var enabled int
-		if err := rows.Scan(&target.Provider, &target.Service, &target.Channel, &target.Model, &target.RequestModel, &target.Group, &target.Weight, &target.Priority, &enabled); err != nil {
+		if err := rows.Scan(&target.Provider, &target.Service, &target.Channel, &target.Model, &target.RequestModel, &target.Group, &target.Weight, &target.Priority, &enabled, &target.APIKey); err != nil {
 			return nil, fmt.Errorf("扫描审计目标失败: %w", err)
 		}
 		target.Enabled = enabled != 0
@@ -1167,6 +1278,64 @@ func (s *SQLiteStorage) ListAuditTargets() ([]AuditTarget, error) {
 		return nil, fmt.Errorf("遍历审计目标失败: %w", err)
 	}
 	return out, nil
+}
+
+func (s *SQLiteStorage) SetAuditTargetCredential(provider, service, channel, apiKey string) (*AuditTargetCredentialUpdate, error) {
+	ctx := s.effectiveCtx()
+	provider = strings.TrimSpace(provider)
+	service = strings.TrimSpace(service)
+	channel = strings.TrimSpace(channel)
+	apiKey = strings.TrimSpace(apiKey)
+	if provider == "" || service == "" || channel == "" {
+		return nil, fmt.Errorf("provider/service/channel 不能为空")
+	}
+	if apiKey == "" {
+		return nil, fmt.Errorf("api_key 不能为空")
+	}
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE audit_targets
+		SET api_key = ?
+		WHERE provider = ? AND service = ? AND channel = ?
+	`, apiKey, provider, service, channel)
+	if err != nil {
+		return nil, fmt.Errorf("更新渠道凭证失败: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return &AuditTargetCredentialUpdate{
+		Provider:      provider,
+		Service:       service,
+		Channel:       channel,
+		Updated:       int(n),
+		KeyConfigured: apiKey != "",
+		KeyLast4:      last4(apiKey),
+	}, nil
+}
+
+func (s *SQLiteStorage) ClearAuditTargetCredential(provider, service, channel string) (*AuditTargetCredentialUpdate, error) {
+	ctx := s.effectiveCtx()
+	provider = strings.TrimSpace(provider)
+	service = strings.TrimSpace(service)
+	channel = strings.TrimSpace(channel)
+	if provider == "" || service == "" || channel == "" {
+		return nil, fmt.Errorf("provider/service/channel 不能为空")
+	}
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE audit_targets
+		SET api_key = ''
+		WHERE provider = ? AND service = ? AND channel = ?
+	`, provider, service, channel)
+	if err != nil {
+		return nil, fmt.Errorf("清除渠道凭证失败: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return &AuditTargetCredentialUpdate{
+		Provider:      provider,
+		Service:       service,
+		Channel:       channel,
+		Updated:       int(n),
+		KeyConfigured: false,
+		KeyLast4:      "",
+	}, nil
 }
 
 func (s *PostgresStorage) SaveChannelSnapshot(snapshot *ChannelSnapshot) error {
@@ -1803,14 +1972,39 @@ func (s *PostgresStorage) ReplaceAuditTargets(targets []AuditTarget) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	existingKeys := map[string]string{}
+	rows, err := tx.Query(ctx, `
+		SELECT provider, service, channel, model, api_key
+		FROM audit_targets
+		WHERE api_key <> ''
+	`)
+	if err != nil {
+		return fmt.Errorf("读取已有审计目标凭证失败 (PostgreSQL): %w", err)
+	}
+	for rows.Next() {
+		var provider, service, channel, model, apiKey string
+		if err := rows.Scan(&provider, &service, &channel, &model, &apiKey); err != nil {
+			rows.Close()
+			return fmt.Errorf("扫描已有审计目标凭证失败 (PostgreSQL): %w", err)
+		}
+		existingKeys[auditTargetKey(provider, service, channel, model)] = apiKey
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("遍历已有审计目标凭证失败 (PostgreSQL): %w", err)
+	}
+
 	if _, err := tx.Exec(ctx, `DELETE FROM audit_targets`); err != nil {
 		return fmt.Errorf("清空审计目标失败 (PostgreSQL): %w", err)
 	}
 	for _, target := range targets {
+		if strings.TrimSpace(target.APIKey) == "" {
+			target.APIKey = existingKeys[auditTargetKey(target.Provider, target.Service, target.Channel, target.Model)]
+		}
 		_, err := tx.Exec(ctx, `
-			INSERT INTO audit_targets (provider, service, channel, model, request_model, "group", weight, priority, enabled)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-		`, target.Provider, target.Service, target.Channel, target.Model, target.RequestModel, target.Group, target.Weight, target.Priority, target.Enabled)
+			INSERT INTO audit_targets (provider, service, channel, model, request_model, "group", weight, priority, enabled, api_key)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		`, target.Provider, target.Service, target.Channel, target.Model, target.RequestModel, target.Group, target.Weight, target.Priority, target.Enabled, target.APIKey)
 		if err != nil {
 			return fmt.Errorf("写入审计目标失败 (PostgreSQL): %w", err)
 		}
@@ -1824,7 +2018,7 @@ func (s *PostgresStorage) ReplaceAuditTargets(targets []AuditTarget) error {
 func (s *PostgresStorage) ListAuditTargets() ([]AuditTarget, error) {
 	ctx := s.effectiveCtx()
 	rows, err := s.pool.Query(ctx, `
-		SELECT provider, service, channel, model, request_model, "group", weight, priority, enabled
+		SELECT provider, service, channel, model, request_model, "group", weight, priority, enabled, api_key
 		FROM audit_targets
 		ORDER BY provider, service, channel, model
 	`)
@@ -1837,7 +2031,7 @@ func (s *PostgresStorage) ListAuditTargets() ([]AuditTarget, error) {
 	for rows.Next() {
 		var target AuditTarget
 		var enabled bool
-		if err := rows.Scan(&target.Provider, &target.Service, &target.Channel, &target.Model, &target.RequestModel, &target.Group, &target.Weight, &target.Priority, &enabled); err != nil {
+		if err := rows.Scan(&target.Provider, &target.Service, &target.Channel, &target.Model, &target.RequestModel, &target.Group, &target.Weight, &target.Priority, &enabled, &target.APIKey); err != nil {
 			return nil, fmt.Errorf("扫描审计目标失败 (PostgreSQL): %w", err)
 		}
 		target.Enabled = enabled
@@ -1847,4 +2041,60 @@ func (s *PostgresStorage) ListAuditTargets() ([]AuditTarget, error) {
 		return nil, fmt.Errorf("遍历审计目标失败 (PostgreSQL): %w", err)
 	}
 	return out, nil
+}
+
+func (s *PostgresStorage) SetAuditTargetCredential(provider, service, channel, apiKey string) (*AuditTargetCredentialUpdate, error) {
+	ctx := s.effectiveCtx()
+	provider = strings.TrimSpace(provider)
+	service = strings.TrimSpace(service)
+	channel = strings.TrimSpace(channel)
+	apiKey = strings.TrimSpace(apiKey)
+	if provider == "" || service == "" || channel == "" {
+		return nil, fmt.Errorf("provider/service/channel 不能为空")
+	}
+	if apiKey == "" {
+		return nil, fmt.Errorf("api_key 不能为空")
+	}
+	ct, err := s.pool.Exec(ctx, `
+		UPDATE audit_targets
+		SET api_key = $1
+		WHERE provider = $2 AND service = $3 AND channel = $4
+	`, apiKey, provider, service, channel)
+	if err != nil {
+		return nil, fmt.Errorf("更新渠道凭证失败 (PostgreSQL): %w", err)
+	}
+	return &AuditTargetCredentialUpdate{
+		Provider:      provider,
+		Service:       service,
+		Channel:       channel,
+		Updated:       int(ct.RowsAffected()),
+		KeyConfigured: apiKey != "",
+		KeyLast4:      last4(apiKey),
+	}, nil
+}
+
+func (s *PostgresStorage) ClearAuditTargetCredential(provider, service, channel string) (*AuditTargetCredentialUpdate, error) {
+	ctx := s.effectiveCtx()
+	provider = strings.TrimSpace(provider)
+	service = strings.TrimSpace(service)
+	channel = strings.TrimSpace(channel)
+	if provider == "" || service == "" || channel == "" {
+		return nil, fmt.Errorf("provider/service/channel 不能为空")
+	}
+	ct, err := s.pool.Exec(ctx, `
+		UPDATE audit_targets
+		SET api_key = ''
+		WHERE provider = $1 AND service = $2 AND channel = $3
+	`, provider, service, channel)
+	if err != nil {
+		return nil, fmt.Errorf("清除渠道凭证失败 (PostgreSQL): %w", err)
+	}
+	return &AuditTargetCredentialUpdate{
+		Provider:      provider,
+		Service:       service,
+		Channel:       channel,
+		Updated:       int(ct.RowsAffected()),
+		KeyConfigured: false,
+		KeyLast4:      "",
+	}, nil
 }

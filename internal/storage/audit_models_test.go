@@ -115,6 +115,87 @@ func TestAuditNewAPILogsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestAuditTargetsPreserveAPIKeyOnReplace(t *testing.T) {
+	store := newTestStore(t)
+
+	first := []AuditTarget{{
+		Provider:     "p1",
+		Service:      "cc",
+		Channel:      "101:demo",
+		Model:        "claude-opus-4-8",
+		RequestModel: "claude-opus-4-8",
+		Enabled:      true,
+		APIKey:       "sk-channel-key",
+	}}
+	if err := store.ReplaceAuditTargets(first); err != nil {
+		t.Fatalf("ReplaceAuditTargets first: %v", err)
+	}
+
+	second := []AuditTarget{{
+		Provider:     "p1",
+		Service:      "cc",
+		Channel:      "101:demo",
+		Model:        "claude-opus-4-8",
+		RequestModel: "claude-opus-4-8",
+		Enabled:      true,
+	}}
+	if err := store.ReplaceAuditTargets(second); err != nil {
+		t.Fatalf("ReplaceAuditTargets second: %v", err)
+	}
+
+	targets, err := store.ListAuditTargets()
+	if err != nil {
+		t.Fatalf("ListAuditTargets: %v", err)
+	}
+	if len(targets) != 1 {
+		t.Fatalf("targets len = %d, want 1", len(targets))
+	}
+	if targets[0].APIKey != "sk-channel-key" {
+		t.Fatalf("APIKey = %q, want preserved key", targets[0].APIKey)
+	}
+}
+
+func TestAuditTargetCredentialUpdateAppliesToChannelModels(t *testing.T) {
+	store := newTestStore(t)
+	targets := []AuditTarget{
+		{Provider: "p1", Service: "cc", Channel: "101:demo", Model: "m1", RequestModel: "m1", Enabled: true},
+		{Provider: "p1", Service: "cc", Channel: "101:demo", Model: "m2", RequestModel: "m2", Enabled: true},
+		{Provider: "p1", Service: "cc", Channel: "102:other", Model: "m1", RequestModel: "m1", Enabled: true},
+	}
+	if err := store.ReplaceAuditTargets(targets); err != nil {
+		t.Fatalf("ReplaceAuditTargets: %v", err)
+	}
+	result, err := store.SetAuditTargetCredential("p1", "cc", "101:demo", "sk-channel-key-1234")
+	if err != nil {
+		t.Fatalf("SetAuditTargetCredential: %v", err)
+	}
+	if result.Updated != 2 || !result.KeyConfigured || result.KeyLast4 != "1234" {
+		t.Fatalf("unexpected update result: %+v", result)
+	}
+	got, err := store.ListAuditTargets()
+	if err != nil {
+		t.Fatalf("ListAuditTargets: %v", err)
+	}
+	keys := map[string]string{}
+	for _, target := range got {
+		keys[target.Channel+"|"+target.Model] = target.APIKey
+	}
+	if keys["101:demo|m1"] != "sk-channel-key-1234" || keys["101:demo|m2"] != "sk-channel-key-1234" {
+		t.Fatalf("channel keys not applied: %+v", keys)
+	}
+	if keys["102:other|m1"] != "" {
+		t.Fatalf("other channel key should stay empty: %+v", keys)
+	}
+
+	cleared, err := store.ClearAuditTargetCredential("p1", "cc", "101:demo")
+	if err != nil {
+		t.Fatalf("ClearAuditTargetCredential: %v", err)
+	}
+	if cleared.Updated != 2 || cleared.KeyConfigured || cleared.KeyLast4 != "" {
+		t.Fatalf("unexpected clear result: %+v", cleared)
+	}
+}
+
 func TestAuditDiagnosticRoundTrip(t *testing.T) {
 	store := newTestStore(t)
 
