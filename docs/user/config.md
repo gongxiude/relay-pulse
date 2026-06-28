@@ -2141,7 +2141,7 @@ NEWAPI_PROBE_USER_ID=your-relay-probe-user-id
 
 ### 设置渠道监测 key
 
-从 `new-api` 同步过来的渠道元数据不包含每个渠道的真实监测 key。RelayPulse 在本地 `audit_targets.api_key` 保存渠道级凭证，按 `provider + service + channel` 设置，并自动应用到该渠道下所有模型。
+从 `new-api` 同步过来的渠道元数据必须提供 `base_url`，但不包含每个渠道的真实监测 key。RelayPulse 在本地 `audit_targets.base_url` 保存同步得到的渠道入口，在 `audit_targets.api_key` 保存渠道级凭证。Key 按 `provider + service + channel` 设置，并自动应用到该渠道下所有模型。
 
 ```bash
 curl -X PUT "$RELAY_PULSE_BASE_URL/api/audit/targets/credential" \
@@ -2166,7 +2166,7 @@ curl -X DELETE "$RELAY_PULSE_BASE_URL/api/audit/targets/credential" \
   }'
 ```
 
-主动检测、模板补洞和 `quick-probe-v1` 必须使用 `audit_targets.api_key`。如果目标渠道未配置 key，请求返回或记录 `missing_credential`，不会 fallback 到 `NEWAPI_ACCESS_TOKEN`。
+主动检测、模板补洞和 `quick-probe-v1` 必须使用 `audit_targets.base_url` 和 `audit_targets.api_key`。如果目标渠道未配置 key，请求返回或记录 `missing_credential`，不会 fallback 到 `NEWAPI_ACCESS_TOKEN`。
 
 #### `audit.diagnostics`
 
@@ -2201,14 +2201,14 @@ audit:
 | `step_gap_min` / `step_gap_max` | 多步骤诊断之间的等待窗口，默认 `1m` / `4m` |
 | `cross_5m_boundary` | 是否跨 5 分钟缓存边界，默认 `true` |
 | `baseline_enabled` | 是否启用官方基线对比，默认 `true` |
-| `credential_mode` | 兼容旧配置；new-api 同步渠道的正式检测使用 `audit_targets.api_key` |
+| `credential_mode` | 兼容旧配置；new-api 同步渠道的正式检测使用 `audit_targets.base_url` 和 `audit_targets.api_key` |
 | `template_binding.default` | service 级默认模板绑定，模板补洞和诊断请求骨架从 `templates/*.json` 读取 |
 | `template_binding.model_family` | model family 级模板覆盖配置，当前已解析，后续用于覆盖默认绑定 |
 | `template_binding.channel_type` | channel type 级模板覆盖配置，当前已解析，后续用于覆盖默认绑定 |
 
 `quick-probe-v1` 当前执行器支持 `openai_chat` 请求族，绑定模板必须声明 `request_family`、`override_paths` 和 `response_parser`。OpenAI 兼容通道可使用 `cx-gpt-chat-diagnostic`；Anthropic / AWS Bedrock 转 OpenAI 兼容通道使用 `cx-gpt-chat-diagnostic-notemp`，避免 `claude-opus-4-8` 因 `temperature` 字段返回 400。普通巡检模板仍可用于模板探测补洞，但不能作为 quick-probe 的默认诊断模板。
 
-new-api 同步渠道不包含 channel key，因此模板补洞不会把同步渠道写入 `monitors`，而是临时构造探测目标、读取 `audit_targets.api_key`、复用模板执行器，并把基础可用性结果写入 `probe_history`。
+new-api 同步渠道不包含 channel key，因此模板补洞不会把同步渠道写入 `monitors`，而是临时构造探测目标、读取 `audit_targets.base_url` 和 `audit_targets.api_key`、复用模板执行器，并把基础可用性结果写入 `probe_history`。
 
 ### rpdiag 质量列集成（可选，默认关闭）
 

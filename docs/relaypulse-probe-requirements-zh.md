@@ -84,9 +84,9 @@ new-api HTTP API
 
 ### 渠道级监测凭证
 
-从 `new-api` 同步过来的渠道元数据不包含每个渠道的真实监测 key。RelayPulse 在本地 `audit_targets` 中保存渠道级 `api_key`，按 `provider + service + channel` 维护，并复制到该渠道下的所有模型目标。
+从 `new-api` 同步过来的渠道元数据必须包含渠道 `base_url`，但不包含每个渠道的真实监测 key。RelayPulse 在本地 `audit_targets` 中保存模型级监测目标，`base_url` 来自同步渠道，`api_key` 按 `provider + service + channel` 本地维护，并复制到该渠道下的所有模型目标。
 
-主动检测、模板补洞和 `quick-probe-v1` 必须使用 `audit_targets.api_key`。如果目标渠道未配置 key，检测结果必须标记为 `missing_credential`，不得 fallback 到 `NEWAPI_ACCESS_TOKEN`。
+主动检测、模板补洞和 `quick-probe-v1` 必须使用 `audit_targets.base_url` 和 `audit_targets.api_key`。如果目标渠道未配置 key，检测结果必须标记为 `missing_credential`，不得 fallback 到 `NEWAPI_ACCESS_TOKEN`。
 
 `NEWAPI_ACCESS_TOKEN` 只用于读取 `new-api` 渠道和日志；它不是渠道真实性检测凭证。
 
@@ -232,6 +232,7 @@ audit:
 | 项 | 要求 |
 |---|---|
 | 凭证来源 | `audit_targets.api_key` |
+| 请求入口 | `audit_targets.base_url` |
 | 配置粒度 | `provider + service + channel` |
 | 模型复制 | 同一渠道下所有模型共享该渠道 key |
 | 缺失处理 | 返回 `missing_credential` |

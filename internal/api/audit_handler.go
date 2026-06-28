@@ -237,9 +237,9 @@ func (h *Handler) PostAuditDiagnosticSubmit(c *gin.Context) {
 		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "主动诊断已通过 audit.diagnostics.enabled 关闭")
 		return
 	}
-	target.BaseURL = strings.TrimSpace(appCfg.NewAPI.BaseURL)
+	target.BaseURL = firstNonEmptyString(storedTarget.BaseURL, appCfg.NewAPI.BaseURL)
 	if target.BaseURL == "" {
-		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "NEWAPI_BASE_URL 未配置，无法执行主动诊断")
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "audit target base_url 未配置，无法执行主动诊断")
 		return
 	}
 	target.AccessToken = strings.TrimSpace(storedTarget.APIKey)
@@ -1002,9 +1002,9 @@ func (h *Handler) PostAuditDiagnosticBackfill(c *gin.Context) {
 			apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "主动诊断已通过 audit.diagnostics.enabled 关闭")
 			return
 		}
-		runTarget.BaseURL = strings.TrimSpace(appCfg.NewAPI.BaseURL)
+		runTarget.BaseURL = firstNonEmptyString(target.BaseURL, appCfg.NewAPI.BaseURL)
 		if runTarget.BaseURL == "" {
-			apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "NEWAPI_BASE_URL 未配置，无法执行主动诊断")
+			apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "audit target base_url 未配置，无法执行主动诊断")
 			return
 		}
 		runTarget.AccessToken = strings.TrimSpace(target.APIKey)
@@ -1091,11 +1091,6 @@ func (h *Handler) PostAuditTemplateProbeBackfill(c *gin.Context) {
 		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "主动诊断已通过 audit.diagnostics.enabled 关闭")
 		return
 	}
-	baseURL := strings.TrimSpace(appCfg.NewAPI.BaseURL)
-	if baseURL == "" {
-		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "NEWAPI_BASE_URL 未配置，无法执行主动诊断")
-		return
-	}
 	targets, err := store.ListAuditTargets()
 	if err != nil {
 		apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
@@ -1129,7 +1124,7 @@ func (h *Handler) PostAuditTemplateProbeBackfill(c *gin.Context) {
 			continue
 		}
 		probeCfg, err := audit.BuildTemplateProbeConfig(appCfg, target, audit.TemplateProbeCredentials{
-			BaseURL:     baseURL,
+			BaseURL:     firstNonEmptyString(target.BaseURL, appCfg.NewAPI.BaseURL),
 			AccessToken: strings.TrimSpace(target.APIKey),
 			UserID:      strings.TrimSpace(appCfg.NewAPI.UserID),
 		}, templateName, configDir)

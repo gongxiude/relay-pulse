@@ -25,6 +25,7 @@ func SyncChannels(ctx context.Context, client ChannelLister, store audit.TargetS
 			Type:         ch.Type,
 			Status:       ch.Status,
 			Name:         ch.Name,
+			BaseURL:      ch.BaseURL,
 			Models:       ch.Models,
 			Group:        ch.Group,
 			Weight:       ch.Weight,

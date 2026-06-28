@@ -27,12 +27,14 @@ func TestSyncChannelsWritesTargets(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 
 	mapJSON := `{"gpt-4o":"gpt-4o"}`
+	baseURL := "https://channel.example.com"
 	got, err := SyncChannels(context.Background(), fakeLister{list: &ChannelList{
 		Items: []Channel{{
 			ID:           11,
 			Type:         1,
 			Status:       1,
 			Name:         "demo",
+			BaseURL:      &baseURL,
 			Models:       "gpt-4o",
 			Group:        "default",
 			ModelMapping: &mapJSON,
@@ -50,7 +52,7 @@ func TestSyncChannelsWritesTargets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListAuditTargets: %v", err)
 	}
-	if len(targets) != 1 || targets[0].Provider != "Anthropic" || targets[0].Model != "gpt-4o" {
+	if len(targets) != 1 || targets[0].Provider != "Anthropic" || targets[0].Model != "gpt-4o" || targets[0].BaseURL != baseURL {
 		t.Fatalf("unexpected targets: %+v", targets)
 	}
 }
@@ -78,12 +80,14 @@ func TestSyncChannelsPreservesStoredTargetCredential(t *testing.T) {
 	}
 
 	mapJSON := `{"gpt-4o":"gpt-4o"}`
+	baseURL := "https://channel.example.com"
 	if _, err := SyncChannels(context.Background(), fakeLister{list: &ChannelList{
 		Items: []Channel{{
 			ID:           11,
 			Type:         1,
 			Status:       1,
 			Name:         "demo",
+			BaseURL:      &baseURL,
 			Models:       "gpt-4o",
 			Group:        "default",
 			ModelMapping: &mapJSON,
@@ -102,5 +106,8 @@ func TestSyncChannelsPreservesStoredTargetCredential(t *testing.T) {
 	}
 	if targets[0].APIKey != "sk-channel-key" {
 		t.Fatalf("APIKey = %q, want preserved key", targets[0].APIKey)
+	}
+	if targets[0].BaseURL != baseURL {
+		t.Fatalf("BaseURL = %q, want synced base url", targets[0].BaseURL)
 	}
 }

@@ -792,17 +792,6 @@ func TestAuditModelStatusSeparatesSources(t *testing.T) {
 
 func TestAuditDiagnosticSubmitUsesStoredChannelKey(t *testing.T) {
 	store := newAuditTestStore(t)
-	if err := store.ReplaceAuditTargets([]storage.AuditTarget{{
-		Provider:     "OpenAI",
-		Service:      "cc",
-		Channel:      "101:demo",
-		Model:        "gpt-4o",
-		RequestModel: "gpt-4o",
-		Enabled:      true,
-		APIKey:       "sk-channel-key",
-	}}); err != nil {
-		t.Fatalf("ReplaceAuditTargets: %v", err)
-	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "sk-channel-key" {
 			t.Fatalf("Authorization = %q, want channel key", got)
@@ -815,10 +804,22 @@ func TestAuditDiagnosticSubmitUsesStoredChannelKey(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	if err := store.ReplaceAuditTargets([]storage.AuditTarget{{
+		Provider:     "OpenAI",
+		Service:      "cc",
+		Channel:      "101:demo",
+		Model:        "gpt-4o",
+		RequestModel: "gpt-4o",
+		Enabled:      true,
+		APIKey:       "sk-channel-key",
+		BaseURL:      srv.URL,
+	}}); err != nil {
+		t.Fatalf("ReplaceAuditTargets: %v", err)
+	}
 
 	cfg := &config.AppConfig{
 		NewAPI: config.NewAPIConfig{
-			BaseURL:     srv.URL,
+			BaseURL:     "https://global-newapi-must-not-be-used.example.com",
 			AccessToken: "sync-token-must-not-be-used",
 			UserID:      "u1",
 		},
@@ -895,6 +896,18 @@ func TestAuditSyncStatusReportsProbeFallbackMode(t *testing.T) {
 func TestAuditDiagnosticBackfill(t *testing.T) {
 	store := newAuditTestStore(t)
 	now := time.Now().Unix()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "sk-backfill-channel-key" {
+			t.Fatalf("Authorization = %q, want channel key", got)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"pong\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}))
+	defer srv.Close()
 	if err := store.ReplaceAuditTargets([]storage.AuditTarget{
 		{
 			Provider:     "OpenAI",
@@ -906,6 +919,7 @@ func TestAuditDiagnosticBackfill(t *testing.T) {
 			Priority:     5,
 			Enabled:      true,
 			APIKey:       "sk-backfill-channel-key",
+			BaseURL:      srv.URL,
 		},
 	}); err != nil {
 		t.Fatalf("ReplaceAuditTargets: %v", err)
@@ -922,21 +936,9 @@ func TestAuditDiagnosticBackfill(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("SaveNewAPILogs: %v", err)
 	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("Authorization"); got != "sk-backfill-channel-key" {
-			t.Fatalf("Authorization = %q, want channel key", got)
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"pong\"}}]}\n\n"))
-		_, _ = w.Write([]byte("data: [DONE]\n\n"))
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
-	}))
-	defer srv.Close()
 	router := newAuditTestRouter(t, store, &config.AppConfig{
 		NewAPI: config.NewAPIConfig{
-			BaseURL:     srv.URL,
+			BaseURL:     "https://global-newapi-must-not-be-used.example.com",
 			AccessToken: "sync-token-must-not-be-used",
 			UserID:      "u1",
 		},

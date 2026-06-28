@@ -126,6 +126,7 @@ func TestAuditTargetsPreserveAPIKeyOnReplace(t *testing.T) {
 		RequestModel: "claude-opus-4-8",
 		Enabled:      true,
 		APIKey:       "sk-channel-key",
+		BaseURL:      "https://channel.example.com",
 	}}
 	if err := store.ReplaceAuditTargets(first); err != nil {
 		t.Fatalf("ReplaceAuditTargets first: %v", err)
@@ -153,13 +154,16 @@ func TestAuditTargetsPreserveAPIKeyOnReplace(t *testing.T) {
 	if targets[0].APIKey != "sk-channel-key" {
 		t.Fatalf("APIKey = %q, want preserved key", targets[0].APIKey)
 	}
+	if targets[0].BaseURL != "https://channel.example.com" {
+		t.Fatalf("BaseURL = %q, want preserved base url", targets[0].BaseURL)
+	}
 }
 
 func TestAuditTargetCredentialUpdateAppliesToChannelModels(t *testing.T) {
 	store := newTestStore(t)
 	targets := []AuditTarget{
 		{Provider: "p1", Service: "cc", Channel: "101:demo", Model: "m1", RequestModel: "m1", Enabled: true},
-		{Provider: "p1", Service: "cc", Channel: "101:demo", Model: "m2", RequestModel: "m2", Enabled: true},
+		{Provider: "p1", Service: "cc", Channel: "101:demo", Model: "m2", RequestModel: "m2", Enabled: true, BaseURL: "https://channel.example.com"},
 		{Provider: "p1", Service: "cc", Channel: "102:other", Model: "m1", RequestModel: "m1", Enabled: true},
 	}
 	if err := store.ReplaceAuditTargets(targets); err != nil {
