@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -881,7 +882,10 @@ func TestAuditDiagnosticSubmitUsesStoredChannelKey(t *testing.T) {
 
 func TestAuditDiagnosticSubmitUsesStoredBaseURLNotGlobalNewAPIBaseURL(t *testing.T) {
 	store := newAuditTestStore(t)
+	var channelHits atomic.Int64
+	var globalHits atomic.Int64
 	channelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		channelHits.Add(1)
 		if got := r.Header.Get("Authorization"); got != "sk-channel-key" {
 			t.Fatalf("Authorization = %q, want channel key", got)
 		}
@@ -892,6 +896,7 @@ func TestAuditDiagnosticSubmitUsesStoredBaseURLNotGlobalNewAPIBaseURL(t *testing
 	defer channelServer.Close()
 
 	globalServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		globalHits.Add(1)
 		http.Error(w, "global base url must not be used", http.StatusUnauthorized)
 	}))
 	defer globalServer.Close()
@@ -925,6 +930,46 @@ func TestAuditDiagnosticSubmitUsesStoredBaseURLNotGlobalNewAPIBaseURL(t *testing
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("submit unexpected: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if channelHits.Load() == 0 || globalHits.Load() != 0 {
+		t.Fatalf("diagnostic should use stored base url only: channel=%d global=%d", channelHits.Load(), globalHits.Load())
+	}
+}
+
+func TestAuditDiagnosticSubmitDoesNotTreatViewServiceAsStoredService(t *testing.T) {
+	store := newAuditTestStore(t)
+	var channelHits atomic.Int64
+	channelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		channelHits.Add(1)
+		http.Error(w, "view service must not reach upstream", http.StatusInternalServerError)
+	}))
+	defer channelServer.Close()
+
+	if err := store.ReplaceAuditTargets([]storage.AuditTarget{{
+		Provider:     "alan-官key直连",
+		Service:      "anthropic",
+		Channel:      "80:alan-官key直连",
+		Model:        "claude-opus-4-8",
+		RequestModel: "claude-opus-4-8",
+		Enabled:      true,
+		BaseURL:      channelServer.URL,
+		APIKey:       "sk-channel-key",
+		Source:       "newapi_sync",
+	}}); err != nil {
+		t.Fatalf("ReplaceAuditTargets: %v", err)
+	}
+
+	router := newAuditTestRouter(t, store, &config.AppConfig{})
+	body := `{"provider":"alan-官key直连","service":"cc","channel":"80:alan-官key直连","model":"claude-opus-4-8","request_model":"claude-opus-4-8"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/audit/diagnostics", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "audit target not found") {
+		t.Fatalf("submit with view service should not match anthropic target: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if channelHits.Load() != 0 {
+		t.Fatalf("view service should fail before upstream call, hits=%d", channelHits.Load())
 	}
 }
 

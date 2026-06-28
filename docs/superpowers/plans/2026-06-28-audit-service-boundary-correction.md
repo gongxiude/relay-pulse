@@ -84,7 +84,7 @@ No changes:
 - Create: `frontend/src/utils/auditServiceBoundary.ts`
 - Create: `frontend/src/utils/auditServiceBoundary.test.ts`
 
-- [ ] **Step 1: Create a failing test for real audit service**
+- [x] **Step 1: Create a failing test for real audit service**
 
 Create `frontend/src/utils/auditServiceBoundary.test.ts`:
 
@@ -118,7 +118,7 @@ describe('getAuditDataService', () => {
 });
 ```
 
-- [ ] **Step 2: Run the focused frontend test and verify it fails**
+- [x] **Step 2: Run the focused frontend test and verify it fails**
 
 Run:
 
@@ -134,7 +134,7 @@ FAIL  src/utils/auditServiceBoundary.test.ts
 Error: Failed to resolve import "./auditServiceBoundary"
 ```
 
-- [ ] **Step 3: Create the utility implementation**
+- [x] **Step 3: Create the utility implementation**
 
 Create `frontend/src/utils/auditServiceBoundary.ts`:
 
@@ -149,7 +149,7 @@ export function getAuditDataService(
 }
 ```
 
-- [ ] **Step 4: Run the focused frontend test and verify it passes**
+- [x] **Step 4: Run the focused frontend test and verify it passes**
 
 Run:
 
@@ -164,7 +164,9 @@ Expected:
 PASS  src/utils/auditServiceBoundary.test.ts
 ```
 
-- [ ] **Step 5: Commit Task 1**
+- [x] **Step 5: Commit Task 1**
+
+Executed as part of the final branch commit instead of a per-task commit.
 
 Run:
 
@@ -181,7 +183,7 @@ git commit -m "test(frontend): define audit service boundary"
 - Modify: `frontend/src/pages/ProviderPage.tsx`
 - Test: `frontend/src/utils/auditServiceBoundary.test.ts`
 
-- [ ] **Step 1: Add the utility import**
+- [x] **Step 1: Add the utility import**
 
 In `frontend/src/pages/ProviderPage.tsx`, add this import near the other utility imports:
 
@@ -189,7 +191,7 @@ In `frontend/src/pages/ProviderPage.tsx`, add this import near the other utility
 import { getAuditDataService } from '../utils/auditServiceBoundary';
 ```
 
-- [ ] **Step 2: Define `auditDataService` from `currentSnapshot.service`**
+- [x] **Step 2: Define `auditDataService` from `currentSnapshot.service`**
 
 After `currentSnapshot` is defined, add:
 
@@ -207,7 +209,7 @@ The surrounding block should look like:
   const auditDataService = useMemo(() => getAuditDataService(currentSnapshot), [currentSnapshot]);
 ```
 
-- [ ] **Step 3: Keep `cc/cx` only for view joins**
+- [x] **Step 3: Keep `cc/cx` only for view joins**
 
 Leave this existing code unchanged because it is for monitor/rpdiag view joins:
 
@@ -224,7 +226,7 @@ Leave this existing code unchanged because it is for monitor/rpdiag view joins:
 
 Also leave `currentRpdiag` using `inferAuditServiceType(currentSnapshot)`.
 
-- [ ] **Step 4: Change diagnostic latest API to use real audit service**
+- [x] **Step 4: Change diagnostic latest API to use real audit service**
 
 Replace:
 
@@ -250,7 +252,7 @@ with:
   });
 ```
 
-- [ ] **Step 5: Change model status API to use real audit service**
+- [x] **Step 5: Change model status API to use real audit service**
 
 Replace:
 
@@ -274,7 +276,7 @@ with:
   });
 ```
 
-- [ ] **Step 6: Ensure history links prefer real audit service**
+- [x] **Step 6: Ensure history links prefer real audit service**
 
 In the `historyParams` block, replace:
 
@@ -288,7 +290,7 @@ with:
         historyParams.set('service', sourceStatus?.service || auditDataService || currentSnapshot.service);
 ```
 
-- [ ] **Step 7: Run TypeScript build**
+- [x] **Step 7: Run TypeScript build**
 
 Run:
 
@@ -303,7 +305,7 @@ Expected:
 ✓ built
 ```
 
-- [ ] **Step 8: Verify no audit data API call still uses view service**
+- [x] **Step 8: Verify no audit data API call still uses view service**
 
 Run:
 
@@ -313,7 +315,9 @@ rg -n "service: currentSnapshot \\? inferAuditServiceType\\(currentSnapshot\\)|s
 
 Expected: no output.
 
-- [ ] **Step 9: Commit Task 2**
+- [x] **Step 9: Commit Task 2**
+
+Executed as part of the final branch commit instead of a per-task commit.
 
 Run:
 
@@ -329,7 +333,7 @@ git commit -m "fix(frontend): query audit APIs with stored service"
 **Files:**
 - Modify: `frontend/src/pages/ProviderPage.tsx`
 
-- [ ] **Step 1: Remove the sync status import**
+- [x] **Step 1: Remove the sync status import**
 
 Remove this import:
 
@@ -337,7 +341,7 @@ Remove this import:
 import { useAuditSyncStatus } from '../hooks/useAuditSyncStatus';
 ```
 
-- [ ] **Step 2: Remove the sync status hook**
+- [x] **Step 2: Remove the sync status hook**
 
 Remove:
 
@@ -345,7 +349,7 @@ Remove:
   const { data: syncStatus } = useAuditSyncStatus();
 ```
 
-- [ ] **Step 3: Remove `showProbeWarning`**
+- [x] **Step 3: Remove `showProbeWarning`**
 
 Delete this block:
 
@@ -357,7 +361,7 @@ Delete this block:
   }, [currentSnapshot, latestDiagnostics, latestDiagnosticsLoading, syncStatus]);
 ```
 
-- [ ] **Step 4: Remove the public warning section**
+- [x] **Step 4: Remove the public warning section**
 
 Delete this JSX block:
 
@@ -377,7 +381,7 @@ Delete this JSX block:
           )}
 ```
 
-- [ ] **Step 5: Replace row fallback text**
+- [x] **Step 5: Replace row fallback text**
 
 Replace:
 
@@ -391,7 +395,7 @@ with:
                             <span className="text-muted text-sm">暂无 quick-probe 样本</span>
 ```
 
-- [ ] **Step 6: Verify internal runtime warning text is absent from ProviderPage**
+- [x] **Step 6: Verify internal runtime warning text is absent from ProviderPage**
 
 Run:
 
@@ -401,7 +405,7 @@ rg -n "probe_runtime|probe_fallback|同步目标|渠道快照|凭证模式|当�
 
 Expected: no output.
 
-- [ ] **Step 7: Build frontend**
+- [x] **Step 7: Build frontend**
 
 Run:
 
@@ -416,7 +420,9 @@ Expected:
 ✓ built
 ```
 
-- [ ] **Step 8: Commit Task 3**
+- [x] **Step 8: Commit Task 3**
+
+Executed as part of the final branch commit instead of a per-task commit.
 
 Run:
 
@@ -432,7 +438,7 @@ git commit -m "fix(frontend): hide internal probe runtime warning"
 **Files:**
 - Modify: `internal/api/audit_handler_test.go`
 
-- [ ] **Step 1: Add a failing test for view service mismatch**
+- [x] **Step 1: Add a failing test for view service mismatch**
 
 In `internal/api/audit_handler_test.go`, add this test near `TestAuditDiagnosticSubmitUsesStoredBaseURLNotGlobalNewAPIBaseURL`:
 
@@ -475,7 +481,7 @@ func TestAuditDiagnosticSubmitDoesNotTreatViewServiceAsStoredService(t *testing.
 }
 ```
 
-- [ ] **Step 2: Run the focused test**
+- [x] **Step 2: Run the focused test**
 
 Run:
 
@@ -491,7 +497,7 @@ ok  	monitor/internal/api
 
 This test should pass on current backend code. It exists to document that `cc/cx` is not a backend audit service.
 
-- [ ] **Step 3: Verify existing stored BaseURL test still passes**
+- [x] **Step 3: Verify existing stored BaseURL test still passes**
 
 Run:
 
@@ -505,7 +511,9 @@ Expected:
 ok  	monitor/internal/api
 ```
 
-- [ ] **Step 4: Commit Task 4**
+- [x] **Step 4: Commit Task 4**
+
+Executed as part of the final branch commit instead of a per-task commit.
 
 Run:
 
