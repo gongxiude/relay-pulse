@@ -191,6 +191,7 @@ export default function ProviderPage() {
   });
   const {
     items: sourceStatuses,
+    meta: sourceStatusMeta,
     loading: sourceStatusLoading,
     error: sourceStatusError,
   } = useAuditModelStatus({
@@ -410,6 +411,16 @@ export default function ProviderPage() {
     return { usable, failedAuth, failedRequest, pending };
   }, [latestDiagnostics]);
 
+  const publicDataSummary = sourceStatusMeta?.summary;
+  const templateAvailability = publicDataSummary?.template_availability ?? null;
+  const templateTotal = publicDataSummary?.template_probe_total ?? 0;
+  const templateSuccess = publicDataSummary?.template_probe_success ?? 0;
+  const templateTimeout = publicDataSummary?.template_probe_timeout ?? 0;
+  const templateNoResponse = publicDataSummary?.template_probe_no_response ?? 0;
+  const quickProbeDone = publicDataSummary?.quick_probe_done ?? 0;
+  const quickProbeFailed = publicDataSummary?.quick_probe_failed ?? 0;
+  const baselineCompared = publicDataSummary?.baseline_compared ?? 0;
+
   const pageTitle = providerDisplayName ? `${providerDisplayName} - 服务商详情` : '服务商详情';
 
   if (!auditLoading && !providerExists && !auditError) {
@@ -503,6 +514,33 @@ export default function ProviderPage() {
             </div>
           </section>
 
+          <section className="mb-5 grid gap-3 md:grid-cols-4">
+            <PublicMetricCard
+              label="整体模板可用率"
+              value={templateAvailability == null ? '--' : `${templateAvailability.toFixed(templateAvailability >= 99.95 ? 0 : 1)}%`}
+              hint={`${sourceStatusMeta?.window || '24h'} 正常请求模板探测`}
+              tone={templateAvailability == null ? 'muted' : templateAvailability >= 95 ? 'good' : templateAvailability >= 80 ? 'warn' : 'bad'}
+            />
+            <PublicMetricCard
+              label="正常请求"
+              value={`${templateSuccess}/${templateTotal || 0}`}
+              hint="来自原模板探测历史，不使用 quick-probe 真实性流程"
+              tone={templateTotal > 0 && templateSuccess === templateTotal ? 'good' : 'muted'}
+            />
+            <PublicMetricCard
+              label="超时 / 无响应"
+              value={`${templateTimeout} / ${templateNoResponse}`}
+              hint="用于识别请求超时、网络错误或没有响应内容"
+              tone={templateTimeout + templateNoResponse > 0 ? 'warn' : 'good'}
+            />
+            <PublicMetricCard
+              label="Baseline 对比"
+              value={`${baselineCompared}/${quickProbeDone + quickProbeFailed + baselineCompared}`}
+              hint={`quick-probe 完成 ${quickProbeDone}，失败 ${quickProbeFailed}`}
+              tone={baselineCompared > 0 ? 'good' : 'muted'}
+            />
+          </section>
+
           {showProbeWarning && (
             <section className="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-4 text-sm">
               <div className="font-semibold text-amber-200">当前通道尚无有效检测样本</div>
@@ -557,8 +595,8 @@ export default function ProviderPage() {
                     <th className="px-4 py-4 font-medium">当前状态</th>
                     <th className="px-4 py-4 font-medium">最近检测状态</th>
                     <th className="px-4 py-4 font-medium">最终质量分</th>
-                    <th className="px-4 py-4 font-medium">可用率 30D</th>
-                    <th className="px-4 py-4 font-medium">趋势</th>
+                    <th className="px-4 py-4 font-medium">模板可用率 24H</th>
+                    <th className="px-4 py-4 font-medium">Baseline 对比</th>
                     <th className="px-4 py-4 font-medium">结果详情</th>
                   </tr>
                 </thead>
@@ -629,10 +667,10 @@ export default function ProviderPage() {
                         </div>
                       </td>
                       <td className="px-4 py-4">
-                        <AvailabilityBadge value={row.uptime} enabled={row.enabled} />
+                        <TemplateAvailabilityCell status={row.sourceStatus?.template_probe ?? null} enabled={row.enabled} />
                       </td>
                       <td className="px-4 py-4">
-                        <TrendSparkline trend={row.trend} enabled={row.enabled} />
+                        <QuickProbeCompareCell status={row.sourceStatus?.quick_probe ?? null} enabled={row.enabled} />
                       </td>
                       <td className="px-4 py-4">
                         <div className="flex flex-col items-start gap-2">
@@ -681,6 +719,81 @@ export default function ProviderPage() {
         </div>
       </div>
     </>
+  );
+}
+
+function PublicMetricCard({
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  label: string;
+  value: string;
+  hint: string;
+  tone: 'good' | 'warn' | 'bad' | 'muted';
+}) {
+  const toneClass = {
+    good: 'border-emerald-500/25 bg-emerald-500/8 text-emerald-200',
+    warn: 'border-amber-500/25 bg-amber-500/8 text-amber-200',
+    bad: 'border-rose-500/25 bg-rose-500/8 text-rose-200',
+    muted: 'border-default/70 bg-surface/70 text-primary',
+  }[tone];
+  return (
+    <div className={`rounded-xl border px-4 py-4 ${toneClass}`}>
+      <div className="text-xs text-secondary">{label}</div>
+      <div className="mt-2 text-2xl font-bold">{value}</div>
+      <div className="mt-1 text-xs leading-relaxed text-muted">{hint}</div>
+    </div>
+  );
+}
+
+function TemplateAvailabilityCell({
+  status,
+  enabled,
+}: {
+  status: AuditModelStatusItem['template_probe'] | null;
+  enabled: boolean;
+}) {
+  if (!enabled) {
+    return <span className="text-sm text-muted">不可测</span>;
+  }
+  if (!status || status.total <= 0) {
+    return <span className="text-sm text-muted">暂无模板样本</span>;
+  }
+  return (
+    <div className="space-y-1">
+      <AvailabilityBadge value={status.availability} enabled={enabled} />
+      <div className="text-xs text-muted">
+        正常 {status.success + status.degraded}/{status.total}
+        {status.timeout || status.no_response ? ` · 超时 ${status.timeout} · 无响应 ${status.no_response}` : ''}
+      </div>
+    </div>
+  );
+}
+
+function QuickProbeCompareCell({
+  status,
+  enabled,
+}: {
+  status: AuditModelStatusItem['quick_probe'] | null;
+  enabled: boolean;
+}) {
+  if (!enabled) return <span className="text-sm text-muted">不可测</span>;
+  if (!status || status.status === 'missing') return <span className="text-sm text-muted">暂无 quick-probe</span>;
+  const hasBaseline = status.baseline_mode && status.baseline_mode !== 'candidate_only';
+  return (
+    <div className="space-y-1 text-xs">
+      <div className="flex flex-wrap items-center gap-2">
+        <SourceStatusBadge status={status.status} />
+        {status.score ? <span className="font-mono text-primary">{Math.round(status.score)} 分</span> : null}
+      </div>
+      <div className="text-muted">
+        {hasBaseline ? `基线 ${status.baseline_mode}` : '无 baseline 对照'}
+        {status.dimensions_total ? ` · 维度 ${status.dimensions_pass || 0}/${status.dimensions_total} 通过` : ''}
+      </div>
+      {status.active_weight ? <div className="text-muted">active weight {status.active_weight}</div> : null}
+    </div>
   );
 }
 
@@ -868,62 +981,6 @@ function AvailabilityBadge({ value, enabled }: { value: number | null; enabled: 
       {value.toFixed(value >= 100 ? 0 : 1)}%
     </span>
   );
-}
-
-function TrendSparkline({ trend, enabled }: { trend?: RpdiagScoreTrend | null; enabled: boolean }) {
-  const points = buildTrendPoints(trend);
-  if (points.length === 0) {
-    return (
-      <div className="flex items-center gap-1">
-        {[0, 1, 2, 3, 4].map((index) => (
-          <span
-            key={index}
-            className={`inline-block h-1.5 w-1.5 rounded-full ${enabled ? 'bg-slate-500/40' : 'bg-slate-600/40'}`}
-          />
-        ))}
-      </div>
-    );
-  }
-
-  const width = 54;
-  const height = 16;
-  const xStep = points.length === 1 ? 0 : width / (points.length - 1);
-  const coords = points.map((point, index) => {
-    const normalized = point == null ? 0 : Math.max(0, Math.min(100, point));
-    const x = index * xStep;
-    const y = height - (normalized / 100) * (height - 2) - 1;
-    return { x, y, value: point };
-  });
-  const line = coords
-    .filter((point) => point.value != null)
-    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`)
-    .join(' ');
-
-  return (
-    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="overflow-visible">
-      {line && <path d={line} fill="none" stroke="hsl(92 80% 58%)" strokeWidth="1.5" strokeLinecap="round" />}
-      {coords.map((point, index) => (
-        <circle
-          key={index}
-          cx={point.x}
-          cy={point.y}
-          r="1.8"
-          fill={point.value == null ? 'hsl(215 16% 55%)' : point.value >= 70 ? 'hsl(92 80% 58%)' : point.value >= 50 ? 'hsl(35 90% 58%)' : 'hsl(350 85% 60%)'}
-        />
-      ))}
-    </svg>
-  );
-}
-
-function buildTrendPoints(trend?: RpdiagScoreTrend | null): Array<number | null> {
-  if (!trend) return [];
-  if (Array.isArray(trend.recent_attempts) && trend.recent_attempts.length > 0) {
-    return trend.recent_attempts.slice(-5);
-  }
-  if (Array.isArray(trend.recent_scores) && trend.recent_scores.length > 0) {
-    return trend.recent_scores.slice(-5);
-  }
-  return [trend.avg_30d ?? null, trend.avg_7d ?? null, trend.latest ?? null].filter((item) => item !== undefined);
 }
 
 function splitModels(raw: string): string[] {
