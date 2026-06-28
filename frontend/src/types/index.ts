@@ -157,6 +157,28 @@ export const STATUS_MAP: Record<number, StatusKey> = {
   '-1': 'MISSING',  // 缺失数据
 };
 
+export interface AuditDisplaySummary {
+  source: 'audit_model_status';
+  provider: string;
+  service: string;
+  viewService: string;
+  channel?: string;
+  totalModels: number;
+  enabledModels: number;
+  productionTotal: number;
+  productionSuccess: number;
+  productionSuccessRate: number;
+  templateProbeTotal: number;
+  templateProbeSuccess: number;
+  templateProbeTimeout: number;
+  templateProbeNoResponse: number;
+  templateAvailability: number;
+  quickProbeDone: number;
+  quickProbeFailed: number;
+  quickProbeMissing: number;
+  baselineCompared: number;
+}
+
 // 处理后的数据类型
 export interface ProcessedMonitorData {
   id: string;
@@ -178,6 +200,7 @@ export interface ProcessedMonitorData {
   channelName?: string;                // Channel 显示名称
   auditChannelType?: 'recommended' | 'official' | 'reverse' | 'mixed' | 'unknown' | 'user';
   auditChannelTypeLabel?: string | null;
+  auditSummary?: AuditDisplaySummary | null;
   newApiStatusCode?: number | null;    // new-api 同步的原始状态码
   newApiStatusLabel?: string | null;   // new-api 状态展示文案
   board: BoardValue;                   // 板块：hot/secondary/cold
