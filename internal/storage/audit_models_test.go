@@ -115,30 +115,32 @@ func TestAuditNewAPILogsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestAuditTargetsPreserveAPIKeyOnReplace(t *testing.T) {
+func TestAuditTargetsPreserveCredentialBaseURLAndSourceOnReplace(t *testing.T) {
 	store := newTestStore(t)
 
 	first := []AuditTarget{{
-		Provider:     "p1",
-		Service:      "cc",
-		Channel:      "101:demo",
+		Provider:     "alan-官key直连",
+		Service:      "anthropic",
+		Channel:      "80:alan-官key直连",
 		Model:        "claude-opus-4-8",
 		RequestModel: "claude-opus-4-8",
 		Enabled:      true,
+		BaseURL:      "http://72.61.77.104:4000",
+		Source:       "self_reported_official",
 		APIKey:       "sk-channel-key",
-		BaseURL:      "https://channel.example.com",
 	}}
 	if err := store.ReplaceAuditTargets(first); err != nil {
 		t.Fatalf("ReplaceAuditTargets first: %v", err)
 	}
 
 	second := []AuditTarget{{
-		Provider:     "p1",
-		Service:      "cc",
-		Channel:      "101:demo",
+		Provider:     "alan-官key直连",
+		Service:      "anthropic",
+		Channel:      "80:alan-官key直连",
 		Model:        "claude-opus-4-8",
 		RequestModel: "claude-opus-4-8",
 		Enabled:      true,
+		Source:       "newapi_sync",
 	}}
 	if err := store.ReplaceAuditTargets(second); err != nil {
 		t.Fatalf("ReplaceAuditTargets second: %v", err)
@@ -154,8 +156,11 @@ func TestAuditTargetsPreserveAPIKeyOnReplace(t *testing.T) {
 	if targets[0].APIKey != "sk-channel-key" {
 		t.Fatalf("APIKey = %q, want preserved key", targets[0].APIKey)
 	}
-	if targets[0].BaseURL != "https://channel.example.com" {
+	if targets[0].BaseURL != "http://72.61.77.104:4000" {
 		t.Fatalf("BaseURL = %q, want preserved base url", targets[0].BaseURL)
+	}
+	if targets[0].Source != "self_reported_official" {
+		t.Fatalf("Source = %q, want self_reported_official", targets[0].Source)
 	}
 }
 
