@@ -1962,20 +1962,49 @@ func buildAuditQuickProbeStatus(store auditModelStatusStore, target storage.Audi
 	if !usable && runResp.RunStatusReason == "" {
 		runResp.RunStatusReason = summarizeDiagnosticFailureReason(classifiedSteps, reason)
 	}
+	dimensions, err := store.ListDiagnosticDimensions(run.RunID)
+	if err != nil {
+		return auditQuickProbeStatusResponse{}, err
+	}
+	dimensionsTotal, dimensionsPass, dimensionsFail, dimensionsSkip := summarizeDiagnosticDimensions(dimensions)
 	resp := auditQuickProbeStatusResponse{
-		Source:      "quick_probe",
-		Status:      status,
-		RunID:       run.RunID,
-		Usable:      usable,
-		Reason:      firstNonEmptyString(runResp.RunStatusReason, reason),
-		UpdatedAt:   run.UpdatedAt,
-		Methodology: runResp.MethodologyVersion,
+		Source:          "quick_probe",
+		Status:          status,
+		RunID:           run.RunID,
+		Usable:          usable,
+		Reason:          firstNonEmptyString(runResp.RunStatusReason, reason),
+		UpdatedAt:       run.UpdatedAt,
+		Methodology:     runResp.MethodologyVersion,
+		BaselineMode:    runResp.BaselineMode,
+		DimensionsTotal: dimensionsTotal,
+		DimensionsPass:  dimensionsPass,
+		DimensionsFail:  dimensionsFail,
+		DimensionsSkip:  dimensionsSkip,
 	}
 	resp.CompareURL = "/api/audit/compare/" + run.RunID
 	if scoreResp := buildAuditDiagnosticScore(run, score); scoreResp != nil {
 		resp.Score = scoreResp.OverallScore
+		resp.ActiveWeight = scoreResp.ActiveWeight
 	}
 	return resp, nil
+}
+
+func summarizeDiagnosticDimensions(dimensions []*storage.DiagnosticDimension) (total, pass, fail, skip int) {
+	for _, dimension := range dimensions {
+		if dimension == nil {
+			continue
+		}
+		total++
+		switch strings.ToLower(strings.TrimSpace(dimension.Status)) {
+		case "pass":
+			pass++
+		case "skip":
+			skip++
+		default:
+			fail++
+		}
+	}
+	return total, pass, fail, skip
 }
 
 func filterAuditTargets(targets []storage.AuditTarget, provider, service, channel, model string) []storage.AuditTarget {

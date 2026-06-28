@@ -1044,6 +1044,80 @@ func TestAuditModelStatusReturnsTemplateProbeSummary(t *testing.T) {
 	}
 }
 
+func TestAuditModelStatusReturnsQuickProbeDimensionSummary(t *testing.T) {
+	store := newAuditTestStore(t)
+	now := time.Now().Unix()
+	if err := store.ReplaceAuditTargets([]storage.AuditTarget{{
+		Provider:     "OpenAI",
+		Service:      "cc",
+		Channel:      "101:demo",
+		Model:        "gpt-4o",
+		RequestModel: "gpt-4o",
+		Enabled:      true,
+		BaseURL:      "https://channel.example.com",
+		APIKey:       "sk-channel-key",
+	}}); err != nil {
+		t.Fatalf("ReplaceAuditTargets: %v", err)
+	}
+	run := &storage.DiagnosticRun{
+		RunID:     "run-model-status-summary",
+		Provider:  "OpenAI",
+		Service:   "cc",
+		Channel:   "101:demo",
+		Model:     "gpt-4o",
+		Status:    "done",
+		CreatedAt: now,
+		UpdatedAt: now,
+		Input:     []byte(`{"methodology_version":"quick-probe-v1"}`),
+		Output:    []byte(`{"overall_score":88,"active_weight":20,"baseline_mode":"registered_baseline","methodology_version":"quick-probe-v1"}`),
+	}
+	if err := store.SaveDiagnosticRun(run); err != nil {
+		t.Fatalf("SaveDiagnosticRun: %v", err)
+	}
+	if err := store.SaveDiagnosticScore(&storage.DiagnosticScore{
+		RunID:             run.RunID,
+		AuthenticityScore: 88,
+		ProtocolScore:     88,
+		SSEScore:          88,
+		CreatedAt:         now,
+	}); err != nil {
+		t.Fatalf("SaveDiagnosticScore: %v", err)
+	}
+	for _, dim := range []*storage.DiagnosticDimension{
+		{RunID: run.RunID, DimensionKey: "model_match", Weight: 14, Score: 10, NormalizedScore: 1, Status: "pass", CreatedAt: now},
+		{RunID: run.RunID, DimensionKey: "cutoff_match", Weight: 7, Score: 0, NormalizedScore: 0, Status: "fail", CreatedAt: now},
+		{RunID: run.RunID, DimensionKey: "cache_ttl_consistency", Weight: 15, Score: 0, NormalizedScore: 0, Status: "skip", CreatedAt: now},
+	} {
+		if err := store.SaveDiagnosticDimension(dim); err != nil {
+			t.Fatalf("SaveDiagnosticDimension: %v", err)
+		}
+	}
+	router := newAuditTestRouter(t, store, &config.AppConfig{})
+	req := httptest.NewRequest(http.MethodGet, "/api/audit/model-status?provider=OpenAI&service=cc&channel=101:demo&window=24h", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("model status unexpected: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Success bool                     `json:"success"`
+		Data    auditModelStatusResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	got := resp.Data.Items[0].QuickProbe
+	if got.Status != "done" || got.Score != 88 || got.ActiveWeight != 20 {
+		t.Fatalf("unexpected quick probe status: %+v", got)
+	}
+	if got.DimensionsTotal != 3 || got.DimensionsPass != 1 || got.DimensionsFail != 1 || got.DimensionsSkip != 1 {
+		t.Fatalf("unexpected dimension summary: %+v", got)
+	}
+	if resp.Data.Meta.Summary.QuickProbeDone != 1 || resp.Data.Meta.Summary.BaselineCompared != 1 {
+		t.Fatalf("unexpected meta summary: %+v", resp.Data.Meta.Summary)
+	}
+}
+
 func TestAuditSyncStatusReportsProbeFallbackMode(t *testing.T) {
 	store := newAuditTestStore(t)
 	cfg := &config.AppConfig{
