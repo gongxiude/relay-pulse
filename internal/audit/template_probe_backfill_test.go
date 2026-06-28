@@ -66,6 +66,49 @@ func TestBuildTemplateProbeConfigUsesExistingTemplate(t *testing.T) {
 	}
 }
 
+func TestBuildTemplateProbeConfigUsesTargetCredential(t *testing.T) {
+	configDir := t.TempDir()
+	templatesDir := filepath.Join(configDir, "templates")
+	if err := os.MkdirAll(templatesDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll templates: %v", err)
+	}
+	template := `{
+		"model": "GPT",
+		"request_model": "gpt-4o",
+		"url": "{{BASE_URL}}/v1/chat/completions",
+		"method": "POST",
+		"headers": {
+			"Authorization": "{{API_KEY}}",
+			"Content-Type": "application/json"
+		},
+		"body": {"model":"{{MODEL}}","messages":[{"role":"user","content":"ping"}]},
+		"response": {"success_contains": "pong"}
+	}`
+	if err := os.WriteFile(filepath.Join(templatesDir, "cx-gpt-chat-diagnostic.json"), []byte(template), 0o644); err != nil {
+		t.Fatalf("WriteFile template: %v", err)
+	}
+	app := &config.AppConfig{}
+	target := storage.AuditTarget{
+		Provider:     "p1",
+		Service:      "cc",
+		Channel:      "101:demo",
+		Model:        "gpt-4o",
+		RequestModel: "gpt-4o",
+		Enabled:      true,
+	}
+	cfg, err := BuildTemplateProbeConfig(app, target, TemplateProbeCredentials{
+		BaseURL:     "https://newapi.example.com",
+		AccessToken: "sk-channel-key",
+		UserID:      "u1",
+	}, "cx-gpt-chat-diagnostic", configDir)
+	if err != nil {
+		t.Fatalf("BuildTemplateProbeConfig: %v", err)
+	}
+	if cfg.APIKey != "sk-channel-key" {
+		t.Fatalf("APIKey = %q, want channel key", cfg.APIKey)
+	}
+}
+
 func TestProbeRecordFromTemplateProbeResult(t *testing.T) {
 	target := storage.AuditTarget{
 		Provider: "OpenAI",

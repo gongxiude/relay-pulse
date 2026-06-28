@@ -876,6 +876,7 @@ func TestAuditDiagnosticBackfill(t *testing.T) {
 			Weight:       10,
 			Priority:     5,
 			Enabled:      true,
+			APIKey:       "sk-backfill-channel-key",
 		},
 	}); err != nil {
 		t.Fatalf("ReplaceAuditTargets: %v", err)
@@ -893,6 +894,9 @@ func TestAuditDiagnosticBackfill(t *testing.T) {
 		t.Fatalf("SaveNewAPILogs: %v", err)
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "sk-backfill-channel-key" {
+			t.Fatalf("Authorization = %q, want channel key", got)
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"pong\"}}]}\n\n"))
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
@@ -904,7 +908,7 @@ func TestAuditDiagnosticBackfill(t *testing.T) {
 	router := newAuditTestRouter(t, store, &config.AppConfig{
 		NewAPI: config.NewAPIConfig{
 			BaseURL:     srv.URL,
-			AccessToken: "token",
+			AccessToken: "sync-token-must-not-be-used",
 			UserID:      "u1",
 		},
 	})
@@ -924,6 +928,46 @@ func TestAuditDiagnosticBackfill(t *testing.T) {
 	}
 	if !resp.Success || resp.Data.Selected != 1 || resp.Data.Started != 1 || len(resp.Data.Items) != 1 || resp.Data.Items[0].RunID == "" {
 		t.Fatalf("unexpected backfill payload: %+v", resp)
+	}
+}
+
+func TestAuditDiagnosticBackfillRejectsMissingChannelKey(t *testing.T) {
+	store := newAuditTestStore(t)
+	now := time.Now().Unix()
+	if err := store.ReplaceAuditTargets([]storage.AuditTarget{{
+		Provider:     "OpenAI",
+		Service:      "cc",
+		Channel:      "101:demo",
+		Model:        "gpt-4o",
+		RequestModel: "gpt-4o",
+		Enabled:      true,
+	}}); err != nil {
+		t.Fatalf("ReplaceAuditTargets: %v", err)
+	}
+	if err := store.SaveNewAPILogs([]storage.NewAPILog{{
+		ID:               1,
+		CreatedAt:        now,
+		Type:             2,
+		ModelName:        "gpt-4o",
+		ChannelID:        101,
+		PromptTokens:     10,
+		CompletionTokens: 20,
+	}}); err != nil {
+		t.Fatalf("SaveNewAPILogs: %v", err)
+	}
+	router := newAuditTestRouter(t, store, &config.AppConfig{
+		NewAPI: config.NewAPIConfig{
+			BaseURL:     "https://newapi.example.com",
+			AccessToken: "sync-token",
+			UserID:      "u1",
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/audit/diagnostics/backfill", strings.NewReader(`{"max_targets":1,"max_models_per_channel":1,"lookback_hours":24}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "missing_credential") {
+		t.Fatalf("backfill should mark missing credential: code=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

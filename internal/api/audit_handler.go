@@ -967,6 +967,9 @@ func (h *Handler) PostAuditDiagnosticBackfill(c *gin.Context) {
 	items := make([]auditDiagnosticBackfillItemResponse, 0, len(selected))
 	started := 0
 	failed := 0
+	h.cfgMu.RLock()
+	appCfg := h.config
+	h.cfgMu.RUnlock()
 	for _, target := range selected {
 		runTarget := audit.DiagnosticTarget{
 			Provider:     strings.TrimSpace(target.Provider),
@@ -978,17 +981,35 @@ func (h *Handler) PostAuditDiagnosticBackfill(c *gin.Context) {
 		if runTarget.RequestModel == "" {
 			runTarget.RequestModel = runTarget.Model
 		}
-		h.cfgMu.RLock()
-		appCfg := h.config
-		creds, credErr := resolveAuditProbeCredentials(appCfg)
-		h.cfgMu.RUnlock()
-		if credErr != nil {
-			apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, credErr.Error())
+		if strings.TrimSpace(target.APIKey) == "" {
+			item := auditDiagnosticBackfillItemResponse{
+				Provider: runTarget.Provider,
+				Service:  runTarget.Service,
+				Channel:  runTarget.Channel,
+				Model:    runTarget.Model,
+				Status:   "failed",
+				Error:    "missing_credential: 当前渠道未配置监测 key",
+			}
+			failed++
+			items = append(items, item)
+			continue
+		}
+		if appCfg == nil {
+			apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "new-api 配置缺失，无法执行主动诊断")
 			return
 		}
-		runTarget.BaseURL = creds.BaseURL
-		runTarget.AccessToken = creds.AccessToken
-		runTarget.UserID = creds.UserID
+		if !appCfg.Audit.Diagnostics.IsEnabled() {
+			apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "主动诊断已通过 audit.diagnostics.enabled 关闭")
+			return
+		}
+		runTarget.BaseURL = strings.TrimSpace(appCfg.NewAPI.BaseURL)
+		if runTarget.BaseURL == "" {
+			apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "NEWAPI_BASE_URL 未配置，无法执行主动诊断")
+			return
+		}
+		runTarget.AccessToken = strings.TrimSpace(target.APIKey)
+		runTarget.UserID = strings.TrimSpace(appCfg.NewAPI.UserID)
+		runTarget.CredentialSource = "audit_targets.api_key"
 		if err := attachAuditDiagnosticTemplate(appCfg, h.configDir(), &runTarget); err != nil {
 			item := auditDiagnosticBackfillItemResponse{
 				Provider: runTarget.Provider,
@@ -1061,10 +1082,18 @@ func (h *Handler) PostAuditTemplateProbeBackfill(c *gin.Context) {
 	}
 	h.cfgMu.RLock()
 	appCfg := h.config
-	creds, credErr := resolveAuditProbeCredentials(h.config)
 	h.cfgMu.RUnlock()
-	if credErr != nil {
-		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, credErr.Error())
+	if appCfg == nil {
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "new-api 配置缺失，无法执行主动诊断")
+		return
+	}
+	if !appCfg.Audit.Diagnostics.IsEnabled() {
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "主动诊断已通过 audit.diagnostics.enabled 关闭")
+		return
+	}
+	baseURL := strings.TrimSpace(appCfg.NewAPI.BaseURL)
+	if baseURL == "" {
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "NEWAPI_BASE_URL 未配置，无法执行主动诊断")
 		return
 	}
 	targets, err := store.ListAuditTargets()
@@ -1092,10 +1121,17 @@ func (h *Handler) PostAuditTemplateProbeBackfill(c *gin.Context) {
 			continue
 		}
 		item.Template = templateName
+		if strings.TrimSpace(target.APIKey) == "" {
+			item.Status = "failed"
+			item.Error = "missing_credential: 当前渠道未配置监测 key"
+			failed++
+			items = append(items, item)
+			continue
+		}
 		probeCfg, err := audit.BuildTemplateProbeConfig(appCfg, target, audit.TemplateProbeCredentials{
-			BaseURL:     creds.BaseURL,
-			AccessToken: creds.AccessToken,
-			UserID:      creds.UserID,
+			BaseURL:     baseURL,
+			AccessToken: strings.TrimSpace(target.APIKey),
+			UserID:      strings.TrimSpace(appCfg.NewAPI.UserID),
 		}, templateName, configDir)
 		if err != nil {
 			item.Status = "failed"
