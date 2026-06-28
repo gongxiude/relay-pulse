@@ -170,6 +170,24 @@ type auditDiagnosticLatestMetaResponse struct {
 	Count int `json:"count"`
 }
 
+type auditDiagnosticHistoryResponse struct {
+	Items []auditDiagnosticLatestItemResponse `json:"items"`
+	Meta  auditDiagnosticHistoryMetaResponse  `json:"meta"`
+}
+
+type auditDiagnosticHistoryMetaResponse struct {
+	Limit      int    `json:"limit"`
+	Offset     int    `json:"offset"`
+	Count      int    `json:"count"`
+	Total      int    `json:"total"`
+	Provider   string `json:"provider,omitempty"`
+	Service    string `json:"service,omitempty"`
+	Channel    string `json:"channel,omitempty"`
+	Model      string `json:"model,omitempty"`
+	Status     string `json:"status,omitempty"`
+	NextOffset *int   `json:"next_offset,omitempty"`
+}
+
 type auditDiagnosticSubmitRequest struct {
 	Provider     string `json:"provider"`
 	Service      string `json:"service"`
