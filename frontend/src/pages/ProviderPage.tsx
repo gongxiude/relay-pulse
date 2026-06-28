@@ -7,7 +7,6 @@ import { ChannelTypeIcon, parseChannelType } from '../components/ChannelTypeIcon
 import { useAuditChannels } from '../hooks/useAuditChannels';
 import { useAuditDiagnosticLatest } from '../hooks/useAuditDiagnosticLatest';
 import { useAuditModelStatus } from '../hooks/useAuditModelStatus';
-import { useAuditSyncStatus } from '../hooks/useAuditSyncStatus';
 import { useMonitorData } from '../hooks/useMonitorData';
 import { useRpdiagScores, lookupRpdiagScore } from '../hooks/useRpdiagScores';
 import { useSeoMeta } from '../hooks/useSeoMeta';
@@ -73,7 +72,6 @@ export default function ProviderPage() {
   const normalizedProvider = canonicalize(provider);
   const { channels: auditChannels, loading: auditLoading, error: auditError } = useAuditChannels();
   const { scores: rpdiagScores, loaded: rpdiagLoaded } = useRpdiagScores();
-  const { data: syncStatus } = useAuditSyncStatus();
   const {
     rawData,
     loading: monitorLoading,
@@ -390,12 +388,6 @@ export default function ProviderPage() {
     };
   }, [modelRows]);
 
-  const showProbeWarning = useMemo(() => {
-    if (!currentSnapshot || latestDiagnosticsLoading) return false;
-    if (latestDiagnostics.some((item) => item.usable)) return false;
-    return Boolean(syncStatus?.probe_runtime?.warning);
-  }, [currentSnapshot, latestDiagnostics, latestDiagnosticsLoading, syncStatus]);
-
   const diagnosticSummary = useMemo(() => {
     let usable = 0;
     let failedAuth = 0;
@@ -544,20 +536,6 @@ export default function ProviderPage() {
             />
           </section>
 
-          {showProbeWarning && (
-            <section className="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-4 text-sm">
-              <div className="font-semibold text-amber-200">当前通道尚无有效检测样本</div>
-              <p className="mt-1 text-amber-100 leading-relaxed">
-                {syncStatus?.probe_runtime.warning}
-              </p>
-              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-amber-200/90">
-                <span>同步目标 {syncStatus?.targets.enabled ?? 0}/{syncStatus?.targets.total ?? 0}</span>
-                <span>渠道快照 {syncStatus?.channels?.channel_count ?? 0}</span>
-                <span>凭证模式 {syncStatus?.probe_runtime.probe_credential_mode ?? 'missing'}</span>
-              </div>
-            </section>
-          )}
-
           <section className="mb-3">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
@@ -652,7 +630,7 @@ export default function ProviderPage() {
                               ) : null}
                             </div>
                           ) : (
-                            <span className="text-muted text-sm">{showProbeWarning ? '等待有效样本' : '暂无检测记录'}</span>
+                            <span className="text-muted text-sm">暂无 quick-probe 样本</span>
                           )}
                           {row.latestAttemptReason ? (
                             <div className="max-w-[18rem] text-xs leading-relaxed text-amber-300">
