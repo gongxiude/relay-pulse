@@ -175,5 +175,6 @@ export interface RpdiagScore {
 }
 
 /** /api/rpdiag-scores 响应。
- *  键格式 "provider|service|channel"，三段均为小写并已剥 rpdiag 前缀。 */
+ *  键格式 "provider|service|channel"，三段均小写；channel 为原始 channel_name
+ *  （不剥前缀，o-cx/u-cx 等保持区分，见 useRpdiagScores.buildRpdiagKey）。 */
 export type RpdiagScoresResponse = Record<string, RpdiagScore>;

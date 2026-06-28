@@ -80,7 +80,7 @@ function QualityRanking() {
       .map((d) => {
         const evidence = lookupRpdiagScore(
           scores,
-          d.providerId,
+          [d.providerName, d.providerId],
           d.serviceType,
           d.channelName || d.channel,
         );

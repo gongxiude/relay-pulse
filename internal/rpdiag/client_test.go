@@ -32,25 +32,6 @@ func staleAt() *string {
 	return &s
 }
 
-func TestNormalizeChannelKey(t *testing.T) {
-	cases := map[string]string{
-		"O-Max":           "max",
-		"R-MyChannel":     "mychannel",
-		"M-Mixed":         "mixed",
-		"U-DawAPI-86a39a": "dawapi-86a39a",
-		"cc":              "cc",
-		"":                "",
-		"  O-Padded  ":    "padded",
-		"o-lower":         "lower",
-		"X-NotAPrefix":    "x-notaprefix",
-	}
-	for in, want := range cases {
-		if got := NormalizeChannelKey(in); got != want {
-			t.Errorf("NormalizeChannelKey(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestNormalizeService(t *testing.T) {
 	cases := map[string]string{
 		"claude":  "cc",
@@ -148,23 +129,71 @@ func TestBuildScoresAggregatesByTriple(t *testing.T) {
 	}
 }
 
-func TestBuildScoresFallsBackToChannelNameWhenJoinKeyMissing(t *testing.T) {
-	// Older rpdiag deployments (< v5.1) don't ship `relaypulse_channel_key`.
-	// Local strip must still produce the same join key.
+func TestBuildScoresUsesRawChannelNameAsJoinKey(t *testing.T) {
+	// The join key channel segment is the raw channel_name (trim+lower), not the
+	// prefix-stripped relaypulse_channel_key. "O-Max" → "o-max", prefix kept.
 	c := newTestClient()
 	mk := func(v float64) *float64 { return &v }
 
 	rows := []rankingRow{
 		{
-			ChannelName:  "O-Max", // no RelaypulseChannelKey
+			ChannelName:  "O-Max",
 			ProviderName: "SAIAi", ServiceCLICommand: "claude",
 			Model: "claude-haiku-4-5", ModelKey: "claude-haiku-4-5",
 			ScoreTrend: ScoreTrend{Latest: mk(96)},
 		},
 	}
 	out := c.buildScores(rows)
-	if _, ok := out["saiai|cc|max"]; !ok {
-		t.Errorf("expected fallback join key saiai|cc|max, got %v", keysOf(out))
+	if _, ok := out["saiai|cc|o-max"]; !ok {
+		t.Errorf("expected raw channel_name join key saiai|cc|o-max, got %v", keysOf(out))
+	}
+}
+
+func TestBuildScoresKeepsRawPrefixedCodexChannelsSeparate(t *testing.T) {
+	// Regression: two codex channels under one provider — `o-cx` (paid) and
+	// `u-cx` (free) — both ship relaypulse_channel_key "cx" (the source prefix
+	// stripped down to the bare service code). Keying on that collapsed them into
+	// a single `right.codes|cx|cx` cell, merging both tiers' models. Joining on the
+	// raw channel_name keeps them as two distinct entries so each tier shows its
+	// own quality.
+	c := newTestClient()
+	mk := func(v float64) *float64 { return &v }
+
+	mkRow := func(channel, model string, score float64) rankingRow {
+		return rankingRow{
+			ChannelName: channel, RelaypulseChannelKey: "cx",
+			ProviderName: "right.codes", ServiceCLICommand: "codex",
+			Model: model, ModelKey: model,
+			ScoreTrend: ScoreTrend{Latest: mk(score), LatestAt: freshAt()},
+		}
+	}
+	rows := []rankingRow{
+		mkRow("o-cx", "gpt-5.4", 98),
+		mkRow("o-cx", "gpt-5.5", 92),
+		mkRow("u-cx", "gpt-5.4", 80),
+		mkRow("u-cx", "gpt-5.5", 100),
+	}
+
+	out := c.buildScores(rows)
+	if _, ok := out["right.codes|cx|cx"]; ok {
+		t.Fatalf("o-cx and u-cx collapsed into right.codes|cx|cx; got %v", keysOf(out))
+	}
+	paid, ok := out["right.codes|cx|o-cx"]
+	if !ok {
+		t.Fatalf("missing paid tier right.codes|cx|o-cx, got %v", keysOf(out))
+	}
+	free, ok := out["right.codes|cx|u-cx"]
+	if !ok {
+		t.Fatalf("missing free tier right.codes|cx|u-cx, got %v", keysOf(out))
+	}
+	if len(paid.Models) != 2 || len(free.Models) != 2 {
+		t.Fatalf("each tier should carry its own 2 models, got paid=%d free=%d", len(paid.Models), len(free.Models))
+	}
+	if paid.MaxScore == nil || *paid.MaxScore != 95 {
+		t.Errorf("paid MaxScore = %v, want 95 ((98+92)/2)", paid.MaxScore)
+	}
+	if free.MaxScore == nil || *free.MaxScore != 90 {
+		t.Errorf("free MaxScore = %v, want 90 ((80+100)/2)", free.MaxScore)
 	}
 }
 
@@ -226,9 +255,9 @@ func TestBuildScoresChannelURLEmptyWhenDetailURLMissing(t *testing.T) {
 		// DetailURL 缺省为空字符串
 	}}
 
-	entry, ok := c.buildScores(rows)["saiai|cc|max"]
+	entry, ok := c.buildScores(rows)["saiai|cc|o-max"]
 	if !ok {
-		t.Fatalf("expected entry saiai|cc|max, got %v", keysOf(c.buildScores(rows)))
+		t.Fatalf("expected entry saiai|cc|o-max, got %v", keysOf(c.buildScores(rows)))
 	}
 	if entry.ChannelURL != "" {
 		t.Errorf("ChannelURL = %q, want empty", entry.ChannelURL)
@@ -258,7 +287,7 @@ func TestBuildScoresChannelURLFromFirstParsableRow(t *testing.T) {
 			ScoreTrend: ScoreTrend{Latest: mk(92), LatestAt: freshAt()},
 		},
 	}
-	entry := c.buildScores(rows)["saiai|cc|max"]
+	entry := c.buildScores(rows)["saiai|cc|o-max"]
 	if entry.ChannelURL == "" {
 		t.Fatal("ChannelURL empty; expected it to fall through to the second row's parsable URL")
 	}
@@ -282,7 +311,7 @@ func TestBuildScoresModelKeyFallsBackToModel(t *testing.T) {
 		Model: "  Claude-Haiku-4-5  ", ModelKey: "",
 		ScoreTrend: ScoreTrend{Latest: mk(91), LatestAt: freshAt()},
 	}}
-	entry, ok := c.buildScores(rows)["saiai|cc|max"]
+	entry, ok := c.buildScores(rows)["saiai|cc|o-max"]
 	if !ok {
 		t.Fatalf("expected entry, got %v", keysOf(c.buildScores(rows)))
 	}
@@ -382,7 +411,7 @@ func TestBuildScoresKeepsHardFailRowAsZero(t *testing.T) {
 		},
 	}
 
-	entry, ok := c.buildScores(rows)["saiai|cc|max"]
+	entry, ok := c.buildScores(rows)["saiai|cc|o-max"]
 	if !ok {
 		t.Fatalf("expected hard-fail row to be kept, got %v", keysOf(c.buildScores(rows)))
 	}
@@ -434,7 +463,7 @@ func TestBuildScoresHardFailAppendsZeroWithoutMutatingInput(t *testing.T) {
 		HardFailActive: true,
 	}}
 
-	m := c.buildScores(rows)["saiai|cc|max"].Models[0]
+	m := c.buildScores(rows)["saiai|cc|o-max"].Models[0]
 	if want := []float64{91, 93, 0}; !reflect.DeepEqual(m.Trend.RecentScores, want) {
 		t.Fatalf("RecentScores = %v, want %v", m.Trend.RecentScores, want)
 	}
@@ -480,7 +509,7 @@ func TestBuildScoresPartialHardFailDragsAverageDown(t *testing.T) {
 		},
 	}
 
-	entry := c.buildScores(rows)["saiai|cc|max"]
+	entry := c.buildScores(rows)["saiai|cc|o-max"]
 	if entry.MaxScore == nil || *entry.MaxScore != 46 {
 		t.Fatalf("MaxScore = %v, want 46 ((0 hard-fail + 92 healthy)/2)", entry.MaxScore)
 	}
@@ -559,7 +588,7 @@ func TestBuildScoresStaleRowRanksZeroButKeepsHistory(t *testing.T) {
 		},
 	}
 
-	entry, ok := c.buildScores(rows)["toproutercn|cc|max"]
+	entry, ok := c.buildScores(rows)["toproutercn|cc|o-max"]
 	if !ok {
 		t.Fatalf("expected stale row kept, got %v", keysOf(c.buildScores(rows)))
 	}
@@ -610,7 +639,7 @@ func TestBuildScoresRetiredSiblingExcludedFromAverage(t *testing.T) {
 		},
 	}
 
-	entry := c.buildScores(rows)["toproutercn|cc|max"]
+	entry := c.buildScores(rows)["toproutercn|cc|o-max"]
 	if entry.MaxScore == nil || *entry.MaxScore != 90 {
 		t.Fatalf("MaxScore = %v, want 90 (retired sibling excluded, ranks on active model alone)", entry.MaxScore)
 	}
@@ -664,7 +693,7 @@ func TestBuildScoresTopRouterScenarioAveragesActiveModels(t *testing.T) {
 		},
 	}
 
-	entry := c.buildScores(rows)["toproutercn|cc|toproutercn"]
+	entry := c.buildScores(rows)["toproutercn|cc|o-toproutercn"]
 	if entry.MaxScore == nil {
 		t.Fatalf("MaxScore = nil, want ~32.33")
 	}
@@ -687,7 +716,7 @@ func TestBuildScoresAllRetiredChannelHasNilScore(t *testing.T) {
 		ScoreTrend: ScoreTrend{Latest: mk(88), LatestAt: staleAt()},
 	}}
 
-	entry, ok := c.buildScores(rows)["ghost|cc|ghost"]
+	entry, ok := c.buildScores(rows)["ghost|cc|o-ghost"]
 	if !ok {
 		t.Fatalf("expected entry kept for display, got %v", keysOf(c.buildScores(rows)))
 	}
@@ -721,7 +750,7 @@ func TestBuildScoresDedupesRepeatedModelInAverage(t *testing.T) {
 		},
 	}
 
-	entry := c.buildScores(rows)["saiai|cc|max"]
+	entry := c.buildScores(rows)["saiai|cc|o-max"]
 	if entry.MaxScore == nil || *entry.MaxScore != 80 {
 		t.Fatalf("MaxScore = %v, want 80 (duplicate model counted once, first seen)", entry.MaxScore)
 	}
@@ -799,9 +828,9 @@ func TestScoresAcceptsV53UnavailableRow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("v5.3 payload rejected: %v", err)
 	}
-	entry, ok := scores["aimz|cc|max"]
+	entry, ok := scores["aimz|cc|m-max"]
 	if !ok {
-		t.Fatalf("expected aimz|cc|max, got %v", keysOf(scores))
+		t.Fatalf("expected aimz|cc|m-max, got %v", keysOf(scores))
 	}
 	if len(entry.Models) != 1 {
 		t.Fatalf("Models len = %d, want 1", len(entry.Models))
@@ -858,9 +887,9 @@ func TestRecentAttemptsEmptyVsAbsentRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Scores returned error: %v", err)
 			}
-			entry, ok := scores["toproutercn|cc|max"]
+			entry, ok := scores["toproutercn|cc|o-max"]
 			if !ok {
-				t.Fatalf("missing toproutercn|cc|max entry, got %v", keysOf(scores))
+				t.Fatalf("missing toproutercn|cc|o-max entry, got %v", keysOf(scores))
 			}
 			// Marshal the cloned model trend the way the HTTP handler serves it
 			// to the browser, then assert the recent_attempts fragment.
@@ -930,16 +959,16 @@ func TestScoresMergesClaudeAndCodexBoards(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Scores returned error: %v", err)
 	}
-	cc, ok := scores["saiai|cc|max"]
+	cc, ok := scores["saiai|cc|o-max"]
 	if !ok {
-		t.Fatalf("missing claude entry saiai|cc|max, got %v", keysOf(scores))
+		t.Fatalf("missing claude entry saiai|cc|o-max, got %v", keysOf(scores))
 	}
 	if cc.MaxScore == nil || *cc.MaxScore != 97 {
 		t.Errorf("claude MaxScore = %v, want 97", cc.MaxScore)
 	}
-	cx, ok := scores["saiai|cx|pro"]
+	cx, ok := scores["saiai|cx|o-pro"]
 	if !ok {
-		t.Fatalf("missing codex entry saiai|cx|pro, got %v", keysOf(scores))
+		t.Fatalf("missing codex entry saiai|cx|o-pro, got %v", keysOf(scores))
 	}
 	if cx.MaxScore == nil || *cx.MaxScore != 92 {
 		t.Errorf("codex MaxScore = %v, want 92", cx.MaxScore)
@@ -978,13 +1007,13 @@ func TestScoresCodexClaudeSameChannelKeyedByService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Scores returned error: %v", err)
 	}
-	cc, ok := scores["saiai|cc|max"]
+	cc, ok := scores["saiai|cc|o-max"]
 	if !ok || cc.MaxScore == nil || *cc.MaxScore != 97 {
-		t.Errorf("claude entry saiai|cc|max = %+v (want MaxScore 97), keys=%v", cc, keysOf(scores))
+		t.Errorf("claude entry saiai|cc|o-max = %+v (want MaxScore 97), keys=%v", cc, keysOf(scores))
 	}
-	cx, ok := scores["saiai|cx|max"]
+	cx, ok := scores["saiai|cx|o-max"]
 	if !ok || cx.MaxScore == nil || *cx.MaxScore != 40 {
-		t.Errorf("codex entry saiai|cx|max = %+v (want MaxScore 40), keys=%v", cx, keysOf(scores))
+		t.Errorf("codex entry saiai|cx|o-max = %+v (want MaxScore 40), keys=%v", cx, keysOf(scores))
 	}
 }
 
@@ -1032,10 +1061,10 @@ func TestScoresBoardFailureFallsBackToStale(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Scores after codex failure returned error (expected stale fallback): %v", err)
 	}
-	if _, ok := scores["saiai|cc|max"]; !ok {
+	if _, ok := scores["saiai|cc|o-max"]; !ok {
 		t.Errorf("claude entry vanished on codex-board failure; stale fallback should keep it, got %v", keysOf(scores))
 	}
-	if _, ok := scores["saiai|cx|pro"]; !ok {
+	if _, ok := scores["saiai|cx|o-pro"]; !ok {
 		t.Errorf("codex entry vanished on codex-board failure; stale fallback should keep it, got %v", keysOf(scores))
 	}
 }

@@ -13,14 +13,17 @@ export default defineConfig(({ mode }) => {
       // BACKEND_PORT 让本地起后端在非 8080 端口时也能复用 vite dev 代理
       // （`PORT=8082 ./monitor` + `BACKEND_PORT=8082 npm run dev`）。
       // 不设时回落到与生产嵌入构建一致的 8080。
+      // DEV_PROXY_TARGET 可整体覆盖目标（如指向线上只读数据做 UI 联调）。
       proxy: (() => {
-        const target = `http://localhost:${env.BACKEND_PORT || '8080'}`
+        const target = env.DEV_PROXY_TARGET || `http://localhost:${env.BACKEND_PORT || '8080'}`
+        const changeOrigin = target.startsWith('https://')
+        const opts = { target, changeOrigin }
         return {
-          '/api': target,
-          '/health': target,
-          '/ready': target,
-          '/sitemap.xml': target,
-          '/robots.txt': target,
+          '/api': opts,
+          '/health': opts,
+          '/ready': opts,
+          '/sitemap.xml': opts,
+          '/robots.txt': opts,
         }
       })(),
     },
