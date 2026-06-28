@@ -530,7 +530,7 @@ git commit -m "test(audit): document stored service boundary"
 - No source changes.
 - Local-only generated files: `frontend/dist`, `internal/api/frontend`, `/tmp/relay-pulse-server`.
 
-- [ ] **Step 1: Build frontend**
+- [x] **Step 1: Build frontend**
 
 Run:
 
@@ -545,7 +545,7 @@ Expected:
 ✓ built
 ```
 
-- [ ] **Step 2: Sync frontend dist into Go embed directory for local run**
+- [x] **Step 2: Sync frontend dist into Go embed directory for local run**
 
 Run from repo root:
 
@@ -558,7 +558,7 @@ rg -n "整体模板可用率|Baseline 对比|模板可用率 24H" internal/api/f
 
 Expected: `rg` prints matches inside `ProviderPage-*.js`.
 
-- [ ] **Step 3: Build Go server**
+- [x] **Step 3: Build Go server**
 
 Run:
 
@@ -568,7 +568,7 @@ go build -o /tmp/relay-pulse-server ./cmd/server
 
 Expected: command exits 0.
 
-- [ ] **Step 4: Restart local server in tmux**
+- [x] **Step 4: Restart local server in tmux**
 
 Run:
 
@@ -587,7 +587,7 @@ Expected:
 200
 ```
 
-- [ ] **Step 5: Verify wrong service returns no audit data**
+- [x] **Step 5: Verify wrong service returns no audit data**
 
 Run:
 
@@ -601,7 +601,31 @@ Expected:
 0
 ```
 
-- [ ] **Step 6: Verify real audit service returns data**
+- [x] **Step 6: Verify real audit service returns data**
+
+Observed on local SQLite:
+
+```json
+{
+  "count": 5,
+  "summary": {
+    "total_models": 5,
+    "enabled_models": 5,
+    "template_probe_total": 1,
+    "template_probe_success": 0,
+    "template_probe_timeout": 0,
+    "template_probe_no_response": 0,
+    "template_availability": 0,
+    "production_total": 26,
+    "production_success": 26,
+    "production_success_rate": 100,
+    "quick_probe_done": 1,
+    "quick_probe_failed": 1,
+    "quick_probe_missing": 3,
+    "baseline_compared": 2
+  }
+}
+```
 
 Run:
 
@@ -635,7 +659,7 @@ Expected:
 
 `production_total` may be higher than 1 on a live local database; it must be greater than 0 for this channel.
 
-- [ ] **Step 7: Verify current ProviderPage asset no longer exposes internal warning**
+- [x] **Step 7: Verify current ProviderPage asset no longer exposes internal warning**
 
 Run:
 
@@ -645,7 +669,7 @@ curl -sS 'http://127.0.0.1:18080/assets/ProviderPage-DrytdMdK.js' | rg -n "probe
 
 Expected: no output.
 
-- [ ] **Step 8: Verify current ProviderPage asset contains public metrics**
+- [x] **Step 8: Verify current ProviderPage asset contains public metrics**
 
 Run:
 
@@ -663,7 +687,9 @@ Baseline 对比
 超时 / 无响应
 ```
 
-- [ ] **Step 9: Verify served page loads new asset**
+- [x] **Step 9: Verify served page loads new asset**
+
+Verified local server serves `assets/ProviderPage-DgsysFoC.js`; tmux logs also show the browser requested this asset and the provider page called audit APIs with `service=anthropic`.
 
 Run:
 
@@ -680,7 +706,7 @@ Expected: the printed `assets/index-*.js` must match the latest `frontend/dist/i
 **Files:**
 - No code changes beyond Tasks 1-4.
 
-- [ ] **Step 1: Run Go focused tests**
+- [x] **Step 1: Run Go focused tests**
 
 Run:
 
@@ -697,7 +723,7 @@ ok  	monitor/internal/storage
 ok  	monitor/internal/config
 ```
 
-- [ ] **Step 2: Run frontend tests**
+- [x] **Step 2: Run frontend tests**
 
 Run:
 
@@ -712,7 +738,7 @@ Expected:
 PASS  src/utils/auditServiceBoundary.test.ts
 ```
 
-- [ ] **Step 3: Run frontend build**
+- [x] **Step 3: Run frontend build**
 
 Run:
 
@@ -727,7 +753,7 @@ Expected:
 ✓ built
 ```
 
-- [ ] **Step 4: Check git status before push**
+- [x] **Step 4: Check git status before push**
 
 Run:
 
@@ -743,7 +769,7 @@ Expected before push:
 
 No `frontend/dist`, `internal/api/frontend`, `.env`, `monitor.db`, or `frontend/node_modules` files should appear.
 
-- [ ] **Step 5: Merge to main if implemented in a worktree branch**
+- [x] **Step 5: Merge to main if implemented in a worktree branch**
 
 If execution used a branch named `audit-service-boundary-correction`, run from main worktree:
 
@@ -759,7 +785,7 @@ Expected:
 Merge made by the 'ort' strategy.
 ```
 
-- [ ] **Step 6: Push main**
+- [x] **Step 6: Push main**
 
 Run:
 
