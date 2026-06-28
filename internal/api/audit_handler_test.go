@@ -990,6 +990,60 @@ func TestAuditDiagnosticSubmitRejectsMissingBaseURL(t *testing.T) {
 	}
 }
 
+func TestAuditModelStatusReturnsTemplateProbeSummary(t *testing.T) {
+	store := newAuditTestStore(t)
+	now := time.Now().Unix()
+	if err := store.ReplaceAuditTargets([]storage.AuditTarget{{
+		Provider:     "OpenAI",
+		Service:      "cc",
+		Channel:      "101:demo",
+		Model:        "gpt-4o",
+		RequestModel: "gpt-4o",
+		Enabled:      true,
+		BaseURL:      "https://channel.example.com",
+		APIKey:       "sk-channel-key",
+	}}); err != nil {
+		t.Fatalf("ReplaceAuditTargets: %v", err)
+	}
+	records := []*storage.ProbeRecord{
+		{Provider: "OpenAI", Service: "cc", Channel: "101:demo", Model: "gpt-4o", Status: 1, Latency: 1200, Timestamp: now - 60},
+		{Provider: "OpenAI", Service: "cc", Channel: "101:demo", Model: "gpt-4o", Status: 2, Latency: 2400, Timestamp: now - 120},
+		{Provider: "OpenAI", Service: "cc", Channel: "101:demo", Model: "gpt-4o", Status: 0, SubStatus: storage.SubStatusResponseTimeout, HttpCode: 0, Timestamp: now - 180, ErrorDetail: "timeout"},
+	}
+	for _, record := range records {
+		if err := store.SaveRecord(record); err != nil {
+			t.Fatalf("SaveRecord: %v", err)
+		}
+	}
+	router := newAuditTestRouter(t, store, &config.AppConfig{})
+	req := httptest.NewRequest(http.MethodGet, "/api/audit/model-status?provider=OpenAI&service=cc&channel=101:demo&window=24h", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("model status unexpected: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Success bool                     `json:"success"`
+		Data    auditModelStatusResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if !resp.Success || len(resp.Data.Items) != 1 {
+		t.Fatalf("unexpected payload: %+v", resp)
+	}
+	item := resp.Data.Items[0]
+	if item.TemplateProbe.Total != 3 || item.TemplateProbe.Success != 1 || item.TemplateProbe.Degraded != 1 || item.TemplateProbe.Timeout != 1 || item.TemplateProbe.NoResponse != 1 {
+		t.Fatalf("unexpected template probe metrics: %+v", item.TemplateProbe)
+	}
+	if item.TemplateProbe.Availability < 66 || item.TemplateProbe.Availability > 67 {
+		t.Fatalf("availability = %v, want about 66.7", item.TemplateProbe.Availability)
+	}
+	if resp.Data.Meta.Summary.TemplateProbeTotal != 3 || resp.Data.Meta.Summary.TemplateProbeSuccess != 2 {
+		t.Fatalf("unexpected summary: %+v", resp.Data.Meta.Summary)
+	}
+}
+
 func TestAuditSyncStatusReportsProbeFallbackMode(t *testing.T) {
 	store := newAuditTestStore(t)
 	cfg := &config.AppConfig{
