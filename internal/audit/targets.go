@@ -22,7 +22,7 @@ type ChannelSpec struct {
 	Type         int
 	Status       int
 	Name         string
-	BaseURL      *string
+	BaseURL      string
 	Models       string
 	Group        string
 	Weight       *uint
@@ -55,7 +55,8 @@ func BuildAuditTargets(channels []ChannelSpec) []storage.AuditTarget {
 				Weight:       int(derefUint(ch.Weight)),
 				Priority:     int(derefInt64(ch.Priority)),
 				Enabled:      enabled,
-				BaseURL:      strings.TrimSpace(derefString(ch.BaseURL)),
+				BaseURL:      strings.TrimSpace(ch.BaseURL),
+				Source:       "newapi_sync",
 			})
 		}
 	}
@@ -275,13 +276,6 @@ func derefUint(v *uint) uint {
 func derefInt64(v *int64) int64 {
 	if v == nil {
 		return 0
-	}
-	return *v
-}
-
-func derefString(v *string) string {
-	if v == nil {
-		return ""
 	}
 	return *v
 }

@@ -55,6 +55,9 @@ func TestSyncChannelsWritesTargets(t *testing.T) {
 	if len(targets) != 1 || targets[0].Provider != "Anthropic" || targets[0].Model != "gpt-4o" || targets[0].BaseURL != baseURL {
 		t.Fatalf("unexpected targets: %+v", targets)
 	}
+	if targets[0].Source != "newapi_sync" {
+		t.Fatalf("Source = %q, want newapi_sync", targets[0].Source)
+	}
 }
 
 func TestSyncChannelsPreservesStoredTargetCredential(t *testing.T) {
@@ -109,5 +112,8 @@ func TestSyncChannelsPreservesStoredTargetCredential(t *testing.T) {
 	}
 	if targets[0].BaseURL != baseURL {
 		t.Fatalf("BaseURL = %q, want synced base url", targets[0].BaseURL)
+	}
+	if targets[0].Source != "newapi_sync" {
+		t.Fatalf("Source = %q, want newapi_sync", targets[0].Source)
 	}
 }

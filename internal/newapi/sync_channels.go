@@ -2,6 +2,7 @@ package newapi
 
 import (
 	"context"
+	"strings"
 
 	"monitor/internal/audit"
 )
@@ -25,7 +26,7 @@ func SyncChannels(ctx context.Context, client ChannelLister, store audit.TargetS
 			Type:         ch.Type,
 			Status:       ch.Status,
 			Name:         ch.Name,
-			BaseURL:      ch.BaseURL,
+			BaseURL:      derefString(ch.BaseURL),
 			Models:       ch.Models,
 			Group:        ch.Group,
 			Weight:       ch.Weight,
@@ -43,4 +44,11 @@ func SyncChannels(ctx context.Context, client ChannelLister, store audit.TargetS
 		out = append(out, target.Provider+"/"+target.Channel+"/"+target.Model)
 	}
 	return out, nil
+}
+
+func derefString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
 }
