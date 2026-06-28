@@ -34,8 +34,10 @@ var pathToLangCode = map[string]string{
 	"ja": "ja-JP",
 }
 
-// providerSlugRegex 用于校验 slug 格式（小写字母、数字、连字符）
-var providerSlugRegex = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+// providerSlugRegex 用于校验服务商路由 slug。
+// new-api 同步的 provider 可能包含中文、日文或俄文；这里允许小写字母、
+// 数字和 Unicode 小写/文字脚本，连接符仅限 URL slug 常见安全字符。
+var providerSlugRegex = regexp.MustCompile(`^[\p{Ll}\p{N}\p{Han}\p{Hiragana}\p{Katakana}\p{Hangul}\p{Cyrillic}](?:[\p{Ll}\p{N}\p{Han}\p{Hiragana}\p{Katakana}\p{Hangul}\p{Cyrillic}.~-]*[\p{Ll}\p{N}\p{Han}\p{Hiragana}\p{Katakana}\p{Hangul}\p{Cyrillic}])?$`)
 
 // isValidProviderSlug 校验 provider slug 是否合法
 func isValidProviderSlug(slug string) bool {

@@ -125,6 +125,11 @@ func TestIsValidProviderSlug(t *testing.T) {
 			valid: true,
 		},
 		{
+			name:  "有效 slug - 中文 provider",
+			slug:  "alan-官key直连",
+			valid: true,
+		},
+		{
 			name:  "无效 slug - 空字符串",
 			slug:  "",
 			valid: false,
@@ -646,6 +651,38 @@ func TestInjectMetaTagsUsesAuditProviderLookup(t *testing.T) {
 	}
 	if !strings.Contains(html, "yuexin01-team5000-sunday-2133 服务可用性监测") {
 		t.Fatalf("expected provider meta title, html=%s", html)
+	}
+}
+
+func TestInjectMetaTagsAllowsUnicodeAuditProviderSlug(t *testing.T) {
+	cfg := &config.AppConfig{PublicBaseURL: "https://relaypulse.top"}
+	indexHTML := `<!doctype html>
+<html lang="en">
+<head>
+<meta name="description" content="Default">
+<title>Default</title>
+</head>
+<body></body>
+</html>`
+
+	html, isNotFound := injectMetaTags(indexHTML, "/p/alan-官key直连", cfg, true, func(slug string) (string, bool) {
+		if slug == "alan-官key直连" {
+			return "alan-官key直连", true
+		}
+		return "", false
+	})
+	if isNotFound {
+		t.Fatal("expected unicode audit provider slug to prevent provider 404")
+	}
+	if !strings.Contains(html, "alan-官key直连 服务可用性监测") {
+		t.Fatalf("expected unicode provider meta title, html=%s", html)
+	}
+
+	_, isNotFound = injectMetaTags(indexHTML, `/p/"><script>alert(1)</script>`, cfg, true, func(string) (string, bool) {
+		return "bad", true
+	})
+	if !isNotFound {
+		t.Fatal("expected unsafe provider slug to remain rejected")
 	}
 }
 
