@@ -1,32 +1,36 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { apiGet } from '../utils/apiClient';
-import type { AuditDiagnosticLatestItem, AuditDiagnosticLatestResponse } from '../types/audit';
+import type { AuditDiagnosticHistoryMeta, AuditDiagnosticHistoryResponse, AuditDiagnosticLatestItem } from '../types/audit';
 
-interface UseAuditDiagnosticLatestArgs {
+interface UseAuditDiagnosticHistoryArgs {
   provider?: string;
   service?: string;
   channel?: string;
   model?: string;
-  includeFiltered?: boolean;
+  status?: string;
   limit?: number;
+  offset?: number;
 }
 
-interface UseAuditDiagnosticLatestResult {
+interface UseAuditDiagnosticHistoryResult {
   items: AuditDiagnosticLatestItem[];
+  meta: AuditDiagnosticHistoryMeta | null;
   loading: boolean;
   error: string | null;
 }
 
-export function useAuditDiagnosticLatest({
+export function useAuditDiagnosticHistory({
   provider,
   service,
   channel,
   model,
-  includeFiltered = false,
-  limit = 10,
-}: UseAuditDiagnosticLatestArgs): UseAuditDiagnosticLatestResult {
+  status,
+  limit = 50,
+  offset = 0,
+}: UseAuditDiagnosticHistoryArgs): UseAuditDiagnosticHistoryResult {
   const [items, setItems] = useState<AuditDiagnosticLatestItem[]>([]);
+  const [meta, setMeta] = useState<AuditDiagnosticHistoryMeta | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,10 +40,11 @@ export function useAuditDiagnosticLatest({
     if (service) params.set('service', service);
     if (channel) params.set('channel', channel);
     if (model) params.set('model', model);
-    if (includeFiltered) params.set('include_filtered', '1');
+    if (status) params.set('status', status);
     params.set('limit', String(limit));
+    params.set('offset', String(offset));
     return params.toString();
-  }, [provider, service, channel, model, includeFiltered, limit]);
+  }, [provider, service, channel, model, status, limit, offset]);
 
   useEffect(() => {
     let cancelled = false;
@@ -47,15 +52,16 @@ export function useAuditDiagnosticLatest({
 
     setLoading(true);
     setError(null);
-    apiGet<AuditDiagnosticLatestResponse>(`/api/audit/diagnostics/latest?${query}`, { signal: controller.signal })
+    apiGet<AuditDiagnosticHistoryResponse>(`/api/audit/diagnostics/history?${query}`, { signal: controller.signal })
       .then((response) => {
         if (cancelled) return;
         setItems(Array.isArray(response?.data?.items) ? response.data.items : []);
+        setMeta(response?.data?.meta ?? null);
       })
       .catch((err) => {
         if (cancelled) return;
         if (err instanceof Error && err.name === 'AbortError') return;
-        setError(err instanceof Error ? err.message : '加载最近诊断结果失败');
+        setError(err instanceof Error ? err.message : '加载检测历史失败');
       })
       .finally(() => {
         if (cancelled) return;
@@ -68,5 +74,5 @@ export function useAuditDiagnosticLatest({
     };
   }, [query]);
 
-  return { items, loading, error };
+  return { items, meta, loading, error };
 }

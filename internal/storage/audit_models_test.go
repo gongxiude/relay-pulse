@@ -211,6 +211,48 @@ func TestAuditDiagnosticRoundTrip(t *testing.T) {
 	}
 }
 
+func TestDiagnosticRunFilterOffsetAndCount(t *testing.T) {
+	store := newTestStore(t)
+	runs := []*DiagnosticRun{
+		{RunID: "run-1", Provider: "p1", Service: "anthropic", Channel: "ch1", Model: "m1", Status: "done", CreatedAt: 100, UpdatedAt: 100},
+		{RunID: "run-2", Provider: "p1", Service: "anthropic", Channel: "ch1", Model: "m1", Status: "failed_auth", CreatedAt: 200, UpdatedAt: 200},
+		{RunID: "run-3", Provider: "p1", Service: "anthropic", Channel: "ch1", Model: "m1", Status: "failed_request", CreatedAt: 300, UpdatedAt: 300},
+		{RunID: "run-4", Provider: "p1", Service: "openai", Channel: "ch1", Model: "m1", Status: "done", CreatedAt: 400, UpdatedAt: 400},
+	}
+	for _, run := range runs {
+		if err := store.SaveDiagnosticRun(run); err != nil {
+			t.Fatalf("SaveDiagnosticRun(%s): %v", run.RunID, err)
+		}
+	}
+
+	filter := DiagnosticRunFilter{
+		Provider: "p1",
+		Service:  "anthropic",
+		Channel:  "ch1",
+		Model:    "m1",
+		Limit:    2,
+		Offset:   1,
+	}
+	got, err := store.ListDiagnosticRuns(filter)
+	if err != nil {
+		t.Fatalf("ListDiagnosticRuns: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len(got)=%d, want 2", len(got))
+	}
+	if got[0].RunID != "run-2" || got[1].RunID != "run-1" {
+		t.Fatalf("unexpected paged order: got %s,%s", got[0].RunID, got[1].RunID)
+	}
+
+	count, err := store.CountDiagnosticRunsFiltered(filter)
+	if err != nil {
+		t.Fatalf("CountDiagnosticRunsFiltered: %v", err)
+	}
+	if count != 3 {
+		t.Fatalf("count=%d, want 3", count)
+	}
+}
+
 func TestAuditDiagnosticGroupAndDimensionsRoundTrip(t *testing.T) {
 	store := newTestStore(t)
 

@@ -145,6 +145,65 @@ type DiagnosticRunFilter struct {
 	Model    string
 	Status   string
 	Limit    int
+	Offset   int
+}
+
+func sqliteDiagnosticRunWhere(filter DiagnosticRunFilter) ([]string, []any) {
+	args := make([]any, 0, 5)
+	clauses := make([]string, 0, 5)
+	if strings.TrimSpace(filter.Provider) != "" {
+		clauses = append(clauses, "provider = ?")
+		args = append(args, strings.TrimSpace(filter.Provider))
+	}
+	if strings.TrimSpace(filter.Service) != "" {
+		clauses = append(clauses, "service = ?")
+		args = append(args, strings.TrimSpace(filter.Service))
+	}
+	if strings.TrimSpace(filter.Channel) != "" {
+		clauses = append(clauses, "channel = ?")
+		args = append(args, strings.TrimSpace(filter.Channel))
+	}
+	if strings.TrimSpace(filter.Model) != "" {
+		clauses = append(clauses, "model = ?")
+		args = append(args, strings.TrimSpace(filter.Model))
+	}
+	if strings.TrimSpace(filter.Status) != "" {
+		clauses = append(clauses, "status = ?")
+		args = append(args, strings.TrimSpace(filter.Status))
+	}
+	return clauses, args
+}
+
+func postgresDiagnosticRunWhere(filter DiagnosticRunFilter) ([]string, []any, int) {
+	args := make([]any, 0, 5)
+	clauses := make([]string, 0, 5)
+	argIndex := 1
+	if strings.TrimSpace(filter.Provider) != "" {
+		clauses = append(clauses, fmt.Sprintf("provider = $%d", argIndex))
+		args = append(args, strings.TrimSpace(filter.Provider))
+		argIndex++
+	}
+	if strings.TrimSpace(filter.Service) != "" {
+		clauses = append(clauses, fmt.Sprintf("service = $%d", argIndex))
+		args = append(args, strings.TrimSpace(filter.Service))
+		argIndex++
+	}
+	if strings.TrimSpace(filter.Channel) != "" {
+		clauses = append(clauses, fmt.Sprintf("channel = $%d", argIndex))
+		args = append(args, strings.TrimSpace(filter.Channel))
+		argIndex++
+	}
+	if strings.TrimSpace(filter.Model) != "" {
+		clauses = append(clauses, fmt.Sprintf("model = $%d", argIndex))
+		args = append(args, strings.TrimSpace(filter.Model))
+		argIndex++
+	}
+	if strings.TrimSpace(filter.Status) != "" {
+		clauses = append(clauses, fmt.Sprintf("status = $%d", argIndex))
+		args = append(args, strings.TrimSpace(filter.Status))
+		argIndex++
+	}
+	return clauses, args, argIndex
 }
 
 type DiagnosticDimensionSummary struct {
@@ -687,28 +746,7 @@ func (s *SQLiteStorage) GetDiagnosticRun(runID string) (*DiagnosticRun, error) {
 
 func (s *SQLiteStorage) ListDiagnosticRuns(filter DiagnosticRunFilter) ([]*DiagnosticRun, error) {
 	ctx := s.effectiveCtx()
-	args := make([]any, 0, 6)
-	clauses := make([]string, 0, 5)
-	if strings.TrimSpace(filter.Provider) != "" {
-		clauses = append(clauses, "provider = ?")
-		args = append(args, strings.TrimSpace(filter.Provider))
-	}
-	if strings.TrimSpace(filter.Service) != "" {
-		clauses = append(clauses, "service = ?")
-		args = append(args, strings.TrimSpace(filter.Service))
-	}
-	if strings.TrimSpace(filter.Channel) != "" {
-		clauses = append(clauses, "channel = ?")
-		args = append(args, strings.TrimSpace(filter.Channel))
-	}
-	if strings.TrimSpace(filter.Model) != "" {
-		clauses = append(clauses, "model = ?")
-		args = append(args, strings.TrimSpace(filter.Model))
-	}
-	if strings.TrimSpace(filter.Status) != "" {
-		clauses = append(clauses, "status = ?")
-		args = append(args, strings.TrimSpace(filter.Status))
-	}
+	clauses, args := sqliteDiagnosticRunWhere(filter)
 	query := `
 		SELECT run_id, provider, service, channel, model, status, created_at, updated_at, input_json, output_json
 		FROM diagnostic_runs
@@ -721,8 +759,12 @@ func (s *SQLiteStorage) ListDiagnosticRuns(filter DiagnosticRunFilter) ([]*Diagn
 	if limit <= 0 {
 		limit = 20
 	}
-	query += ` LIMIT ?`
-	args = append(args, limit)
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	query += ` LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("查询诊断任务列表失败: %w", err)
@@ -750,6 +792,20 @@ func (s *SQLiteStorage) ListDiagnosticRuns(filter DiagnosticRunFilter) ([]*Diagn
 		return nil, fmt.Errorf("遍历诊断任务列表失败: %w", err)
 	}
 	return out, nil
+}
+
+func (s *SQLiteStorage) CountDiagnosticRunsFiltered(filter DiagnosticRunFilter) (int, error) {
+	ctx := s.effectiveCtx()
+	clauses, args := sqliteDiagnosticRunWhere(filter)
+	query := `SELECT COUNT(*) FROM diagnostic_runs`
+	if len(clauses) > 0 {
+		query += ` WHERE ` + strings.Join(clauses, ` AND `)
+	}
+	var count int
+	if err := s.db.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("统计诊断任务列表失败: %w", err)
+	}
+	return count, nil
 }
 
 func (s *SQLiteStorage) CountDiagnosticRuns(status string) (int, error) {
@@ -1384,34 +1440,7 @@ func (s *PostgresStorage) GetDiagnosticRun(runID string) (*DiagnosticRun, error)
 
 func (s *PostgresStorage) ListDiagnosticRuns(filter DiagnosticRunFilter) ([]*DiagnosticRun, error) {
 	ctx := s.effectiveCtx()
-	args := make([]any, 0, 6)
-	clauses := make([]string, 0, 5)
-	argIndex := 1
-	if strings.TrimSpace(filter.Provider) != "" {
-		clauses = append(clauses, fmt.Sprintf("provider = $%d", argIndex))
-		args = append(args, strings.TrimSpace(filter.Provider))
-		argIndex++
-	}
-	if strings.TrimSpace(filter.Service) != "" {
-		clauses = append(clauses, fmt.Sprintf("service = $%d", argIndex))
-		args = append(args, strings.TrimSpace(filter.Service))
-		argIndex++
-	}
-	if strings.TrimSpace(filter.Channel) != "" {
-		clauses = append(clauses, fmt.Sprintf("channel = $%d", argIndex))
-		args = append(args, strings.TrimSpace(filter.Channel))
-		argIndex++
-	}
-	if strings.TrimSpace(filter.Model) != "" {
-		clauses = append(clauses, fmt.Sprintf("model = $%d", argIndex))
-		args = append(args, strings.TrimSpace(filter.Model))
-		argIndex++
-	}
-	if strings.TrimSpace(filter.Status) != "" {
-		clauses = append(clauses, fmt.Sprintf("status = $%d", argIndex))
-		args = append(args, strings.TrimSpace(filter.Status))
-		argIndex++
-	}
+	clauses, args, argIndex := postgresDiagnosticRunWhere(filter)
 	query := `
 		SELECT run_id, provider, service, channel, model, status, created_at, updated_at, input_json, output_json
 		FROM diagnostic_runs
@@ -1424,8 +1453,12 @@ func (s *PostgresStorage) ListDiagnosticRuns(filter DiagnosticRunFilter) ([]*Dia
 	if limit <= 0 {
 		limit = 20
 	}
-	query += fmt.Sprintf(" LIMIT $%d", argIndex)
-	args = append(args, limit)
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argIndex, argIndex+1)
+	args = append(args, limit, offset)
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("查询诊断任务列表失败 (PostgreSQL): %w", err)
@@ -1453,6 +1486,20 @@ func (s *PostgresStorage) ListDiagnosticRuns(filter DiagnosticRunFilter) ([]*Dia
 		return nil, fmt.Errorf("遍历诊断任务列表失败 (PostgreSQL): %w", err)
 	}
 	return out, nil
+}
+
+func (s *PostgresStorage) CountDiagnosticRunsFiltered(filter DiagnosticRunFilter) (int, error) {
+	ctx := s.effectiveCtx()
+	clauses, args, _ := postgresDiagnosticRunWhere(filter)
+	query := `SELECT COUNT(*) FROM diagnostic_runs`
+	if len(clauses) > 0 {
+		query += ` WHERE ` + strings.Join(clauses, ` AND `)
+	}
+	var count int
+	if err := s.pool.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("统计诊断任务列表失败 (PostgreSQL): %w", err)
+	}
+	return count, nil
 }
 
 func (s *PostgresStorage) CountDiagnosticRuns(status string) (int, error) {

@@ -101,6 +101,27 @@ export interface AuditDiagnosticLatestResponse {
   };
 }
 
+export interface AuditDiagnosticHistoryMeta {
+  limit: number;
+  offset: number;
+  count: number;
+  total: number;
+  provider?: string;
+  service?: string;
+  channel?: string;
+  model?: string;
+  status?: string;
+  next_offset?: number | null;
+}
+
+export interface AuditDiagnosticHistoryResponse {
+  success: boolean;
+  data: {
+    items: AuditDiagnosticLatestItem[];
+    meta: AuditDiagnosticHistoryMeta;
+  };
+}
+
 export interface AuditModelStatusItem {
   provider: string;
   service: string;

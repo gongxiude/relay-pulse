@@ -6,6 +6,7 @@ import { useSyncLanguage } from './hooks/useSyncLanguage';
 const App = lazy(() => import('./App'));
 const ProviderPage = lazy(() => import('./pages/ProviderPage'));
 const DetectPage = lazy(() => import('./pages/DetectPage'));
+const DetectHistoryPage = lazy(() => import('./pages/DetectHistoryPage'));
 const DetectComparePage = lazy(() => import('./pages/DetectComparePage'));
 const AdminPage = lazy(() => import('./pages/AdminPage'));
 
@@ -85,6 +86,7 @@ function renderChildRoutes() {
       <Route path="p/claudecn-gpt" element={<DetectPage />} />
       <Route path="p/:provider" element={<ProviderPage />} />
       <Route path="detect" element={<DetectPage />} />
+      <Route path="detect/history" element={<DetectHistoryPage />} />
       <Route path="detect/compare" element={<DetectPage />} />
       <Route path="detect/compare/:runId" element={<DetectComparePage />} />
       <Route path="admin" element={<AdminPage />} />

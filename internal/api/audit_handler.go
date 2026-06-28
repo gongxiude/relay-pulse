@@ -26,6 +26,7 @@ type auditReadStore interface {
 	ListNewAPILogsSince(int64) ([]storage.NewAPILog, error)
 	ListDiagnosticRuns(storage.DiagnosticRunFilter) ([]*storage.DiagnosticRun, error)
 	CountDiagnosticRuns(string) (int, error)
+	CountDiagnosticRunsFiltered(storage.DiagnosticRunFilter) (int, error)
 	GetDiagnosticDimensionSummary() (*storage.DiagnosticDimensionSummary, error)
 	GetDiagnosticRun(string) (*storage.DiagnosticRun, error)
 	ListDiagnosticSteps(string) ([]*storage.DiagnosticStep, error)
@@ -451,32 +452,14 @@ func (h *Handler) GetAuditDiagnosticLatest(c *gin.Context) {
 	}
 	items := make([]auditDiagnosticLatestItemResponse, 0, len(runs))
 	for _, run := range runs {
-		score, err := store.GetDiagnosticScore(run.RunID)
+		item, err := buildAuditDiagnosticListItem(store, run)
 		if err != nil {
 			apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
 			return
 		}
-		usable, filterReason, classifiedSteps, err := classifyDiagnosticRun(store, run, score)
-		if err != nil {
-			apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
-			return
-		}
-		if !includeFiltered && !usable {
+		if !includeFiltered && !item.Usable {
 			continue
 		}
-		item := auditDiagnosticLatestItemResponse{
-			Run:          buildAuditDiagnosticRun(run),
-			Score:        buildAuditDiagnosticScore(run, score),
-			Usable:       usable,
-			FilterReason: filterReason,
-		}
-		if !usable && strings.TrimSpace(item.Run.RunStatus) == "" {
-			item.Run.RunStatus = filterReason
-		}
-		if !usable && strings.TrimSpace(item.Run.RunStatusReason) == "" {
-			item.Run.RunStatusReason = summarizeDiagnosticFailureReason(classifiedSteps, filterReason)
-		}
-		item.CompareURL = "/api/audit/compare/" + run.RunID
 		items = append(items, item)
 		if len(items) >= limit {
 			break
@@ -489,6 +472,132 @@ func (h *Handler) GetAuditDiagnosticLatest(c *gin.Context) {
 			Meta: auditDiagnosticLatestMetaResponse{
 				Limit: limit,
 				Count: len(items),
+			},
+		},
+	})
+}
+
+func buildAuditDiagnosticListItem(store auditReadStore, run *storage.DiagnosticRun) (auditDiagnosticLatestItemResponse, error) {
+	score, err := store.GetDiagnosticScore(run.RunID)
+	if err != nil {
+		return auditDiagnosticLatestItemResponse{}, err
+	}
+	usable, filterReason, classifiedSteps, err := classifyDiagnosticRun(store, run, score)
+	if err != nil {
+		return auditDiagnosticLatestItemResponse{}, err
+	}
+	item := auditDiagnosticLatestItemResponse{
+		Run:          buildAuditDiagnosticRun(run),
+		Score:        buildAuditDiagnosticScore(run, score),
+		Usable:       usable,
+		FilterReason: filterReason,
+		CompareURL:   "/api/audit/compare/" + run.RunID,
+	}
+	if !usable && strings.TrimSpace(item.Run.RunStatus) == "" {
+		item.Run.RunStatus = filterReason
+	}
+	if !usable && strings.TrimSpace(item.Run.RunStatusReason) == "" {
+		item.Run.RunStatusReason = summarizeDiagnosticFailureReason(classifiedSteps, filterReason)
+	}
+	return item, nil
+}
+
+func parseAuditHistoryLimit(c *gin.Context) (int, bool) {
+	limit := 50
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value <= 0 {
+			apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "limit 参数错误")
+			return 0, false
+		}
+		if value > 200 {
+			value = 200
+		}
+		limit = value
+	}
+	return limit, true
+}
+
+func parseAuditHistoryOffset(c *gin.Context) (int, bool) {
+	offset := 0
+	if raw := strings.TrimSpace(c.Query("offset")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 0 {
+			apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "offset 参数错误")
+			return 0, false
+		}
+		offset = value
+	}
+	return offset, true
+}
+
+func (h *Handler) GetAuditDiagnosticHistory(c *gin.Context) {
+	store, ok := h.auditStore()
+	if !ok {
+		apiError(c, http.StatusNotImplemented, ErrCodeInternalError, "当前存储不支持审计接口")
+		return
+	}
+	limit, ok := parseAuditHistoryLimit(c)
+	if !ok {
+		return
+	}
+	offset, ok := parseAuditHistoryOffset(c)
+	if !ok {
+		return
+	}
+
+	filter := storage.DiagnosticRunFilter{
+		Provider: strings.TrimSpace(c.Query("provider")),
+		Service:  strings.TrimSpace(c.Query("service")),
+		Channel:  strings.TrimSpace(c.Query("channel")),
+		Model:    strings.TrimSpace(c.Query("model")),
+		Status:   strings.TrimSpace(c.Query("status")),
+		Limit:    limit,
+		Offset:   offset,
+	}
+
+	total, err := store.CountDiagnosticRunsFiltered(filter)
+	if err != nil {
+		apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+		return
+	}
+	runs, err := store.ListDiagnosticRuns(filter)
+	if err != nil {
+		apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+		return
+	}
+
+	items := make([]auditDiagnosticLatestItemResponse, 0, len(runs))
+	for _, run := range runs {
+		item, err := buildAuditDiagnosticListItem(store, run)
+		if err != nil {
+			apiError(c, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+			return
+		}
+		items = append(items, item)
+	}
+
+	var nextOffset *int
+	if offset+len(items) < total {
+		next := offset + len(items)
+		nextOffset = &next
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": auditDiagnosticHistoryResponse{
+			Items: items,
+			Meta: auditDiagnosticHistoryMetaResponse{
+				Limit:      limit,
+				Offset:     offset,
+				Count:      len(items),
+				Total:      total,
+				Provider:   filter.Provider,
+				Service:    filter.Service,
+				Channel:    filter.Channel,
+				Model:      filter.Model,
+				Status:     filter.Status,
+				NextOffset: nextOffset,
 			},
 		},
 	})

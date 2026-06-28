@@ -177,6 +177,7 @@ func NewServer(store storage.Storage, cfg *config.AppConfig, port string, autoMo
 	router.POST("/api/audit/diagnostics/backfill", handler.PostAuditDiagnosticBackfill)
 	router.POST("/api/audit/template-probes/backfill", handler.PostAuditTemplateProbeBackfill)
 	router.GET("/api/audit/diagnostics/latest", handler.GetAuditDiagnosticLatest)
+	router.GET("/api/audit/diagnostics/history", handler.GetAuditDiagnosticHistory)
 	router.GET("/api/audit/diagnostics/:run_id", handler.GetAuditDiagnostic)
 	router.GET("/api/audit/compare/:run_id", handler.GetAuditCompare)
 
