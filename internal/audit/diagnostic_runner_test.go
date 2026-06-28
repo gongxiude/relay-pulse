@@ -568,6 +568,59 @@ func TestDiagnosticRunnerMarksAll401AsFailedAuth(t *testing.T) {
 	}
 }
 
+func TestDiagnosticRunnerStoresHTTPErrorEvidence(t *testing.T) {
+	store := newDiagnosticStore(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Test-Error", "auth")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"bad key"}`))
+	}))
+	defer srv.Close()
+
+	runner := NewDiagnosticRunner(srv.Client())
+	run, err := runner.Run(context.Background(), DiagnosticTarget{
+		Provider:         "p1",
+		Service:          "anthropic",
+		Channel:          "80:demo",
+		Model:            "claude-opus-4-8",
+		RequestModel:     "claude-opus-4-8",
+		BaseURL:          srv.URL,
+		AccessToken:      "sk-bad",
+		UserID:           "1",
+		CredentialSource: "audit_targets.api_key",
+		Template:         testOpenAIChatDiagnosticTemplate(),
+		TemplateName:     "test-template",
+	}, store)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	steps, err := store.ListDiagnosticSteps(run.RunID)
+	if err != nil {
+		t.Fatalf("ListDiagnosticSteps: %v", err)
+	}
+	if len(steps) == 0 {
+		t.Fatal("expected saved steps")
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(steps[0].ExecutionMeta, &meta); err != nil {
+		t.Fatalf("unmarshal meta: %v", err)
+	}
+	if got := int(meta["status_code"].(float64)); got != http.StatusUnauthorized {
+		t.Fatalf("status_code = %d, want 401", got)
+	}
+	if got := meta["request_url"].(string); got != srv.URL+"/diagnostic/chat" {
+		t.Fatalf("request_url = %q", got)
+	}
+	if !strings.Contains(meta["response_text"].(string), "bad key") {
+		t.Fatalf("response_text missing error body: %+v", meta)
+	}
+	headers, ok := meta["response_headers"].(map[string]any)
+	if !ok || headers["X-Test-Error"] != "auth" {
+		t.Fatalf("response_headers missing X-Test-Error: %+v", meta["response_headers"])
+	}
+}
+
 func TestBuildDimensionsForRunWithBaselineAwareScorers(t *testing.T) {
 	score := &storage.DiagnosticScore{
 		AuthenticityScore: 90,

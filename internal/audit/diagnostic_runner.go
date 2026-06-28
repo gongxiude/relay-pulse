@@ -178,10 +178,25 @@ func (r *DiagnosticRunner) Run(ctx context.Context, target DiagnosticTarget, sto
 		}
 		if err != nil {
 			step.ErrorMessage = err.Error()
-			step.ExecutionMeta = mustJSON(map[string]any{
+			meta := map[string]any{
 				"step_name": stepDef.Name,
 				"error":     err.Error(),
-			})
+			}
+			if resp != nil {
+				meta["status_code"] = resp.StatusCode
+				meta["latency_ms"] = resp.LatencyMs
+				meta["ttft_ms"] = resp.TTFTMs
+				meta["stream_chunks"] = resp.StreamChunks
+				meta["response_model"] = resp.ResponseModel
+				meta["finish_reason"] = resp.FinishReason
+				meta["usage"] = resp.Usage
+				meta["request_url"] = resp.RequestURL
+				meta["request_body"] = resp.RequestBody
+				meta["response_text"] = resp.ResponseText
+				meta["response_headers"] = resp.ResponseHeaders
+				step.ResponsePreview = previewText(resp.ResponseText)
+			}
+			step.ExecutionMeta = mustJSON(meta)
 			step.ChannelFingerprint = fingerprintFor(target.Channel, target.Model, stepDef.Name, "", err.Error())
 			step.ProviderFingerprint = fingerprintFor(target.Provider, target.Service, stepDef.Name, err.Error())
 			if saveErr := store.SaveDiagnosticStep(step); saveErr != nil {
