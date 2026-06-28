@@ -20,6 +20,7 @@ import {
   extractAuditChannelName,
   inferAuditServiceType,
 } from '../utils/auditChannelAdapter';
+import { getAuditDataService } from '../utils/auditServiceBoundary';
 import { canonicalize } from '../utils/monitorDataProcessor';
 
 type ServiceTab = 'cc' | 'cx';
@@ -156,6 +157,8 @@ export default function ProviderPage() {
     return sourceFilteredSnapshots.find((snapshot) => snapshot.channel === selectedChannel) || null;
   }, [sourceFilteredSnapshots, selectedChannel]);
 
+  const auditDataService = useMemo(() => getAuditDataService(currentSnapshot), [currentSnapshot]);
+
   const monitorIndex = useMemo(() => buildAuditStatusIndex(rawData), [rawData]);
   const matchedMonitor = useMemo<ProcessedMonitorData | undefined>(() => {
     if (!currentSnapshot) return undefined;
@@ -184,7 +187,7 @@ export default function ProviderPage() {
     error: latestDiagnosticsError,
   } = useAuditDiagnosticLatest({
     provider: currentSnapshot?.provider,
-    service: currentSnapshot ? inferAuditServiceType(currentSnapshot) : undefined,
+    service: auditDataService,
     channel: currentSnapshot?.channel,
     includeFiltered: true,
     limit: 10,
@@ -196,7 +199,7 @@ export default function ProviderPage() {
     error: sourceStatusError,
   } = useAuditModelStatus({
     provider: currentSnapshot?.provider,
-    service: currentSnapshot ? inferAuditServiceType(currentSnapshot) : undefined,
+    service: auditDataService,
     channel: currentSnapshot?.channel,
     window: '24h',
   });
@@ -343,7 +346,7 @@ export default function ProviderPage() {
           : null;
         const historyParams = new URLSearchParams();
         historyParams.set('provider', currentSnapshot.provider);
-        historyParams.set('service', sourceStatus?.service || currentSnapshot.service || selectedService);
+        historyParams.set('service', sourceStatus?.service || auditDataService || currentSnapshot.service);
         historyParams.set('channel', currentSnapshot.channel);
         historyParams.set('model', modelName);
         return {
@@ -375,7 +378,7 @@ export default function ProviderPage() {
       ...row,
       id: `${row.id}-${index}`,
     }));
-  }, [currentSnapshot, currentRpdiag, langPrefix, latestAttemptMap, latestDiagnosticMap, matchedMonitor, selectedModel, sourceStatusMap]);
+  }, [auditDataService, currentSnapshot, currentRpdiag, langPrefix, latestAttemptMap, latestDiagnosticMap, matchedMonitor, selectedModel, sourceStatusMap]);
 
   const headerStats = useMemo(() => {
     const total = modelRows.length;
