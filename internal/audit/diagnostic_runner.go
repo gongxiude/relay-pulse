@@ -71,6 +71,27 @@ type diagnosticRunResult struct {
 	Steps []*storage.DiagnosticStep
 }
 
+type streamChunkStats struct {
+	StepCount        int
+	BufferedSteps    int
+	ChunkCounts      []int
+	VisibleTextSpans []int
+}
+
+type cacheUsageStats struct {
+	InputTokens       int
+	CacheReadTokens   int
+	CacheCreateTokens int
+	HasCacheFields    bool
+}
+
+type thinkingStats struct {
+	Present       bool
+	TokenEstimate int
+	TextLength    int
+	BlockTypes    []string
+}
+
 var quickProbeSteps = []diagnosticStepDef{
 	{Name: "ping", Prompt: "ping"},
 	{Name: "identity", Prompt: "请严格按三行输出，不要解释：vendor: <提供商>; brand: <品牌>; model: <模型名>"},
@@ -78,6 +99,10 @@ var quickProbeSteps = []diagnosticStepDef{
 	{Name: "identity_free", Prompt: "不要重复上文，直接说出你的身份与版本。"},
 	{Name: "knowledge_recall", Prompt: "请简洁回答：地球围绕太阳公转一周大约多少天？"},
 	{Name: "digit_count", Prompt: "请从1数到200，只输出数字和空格，不要解释。", FreshSession: true},
+	{Name: "world_knowledge_tier", Prompt: "Answer with only one line: RP_WORLD_KNOWLEDGE=<number>. How many permanent members are in the United Nations Security Council?", FreshSession: true},
+	{Name: "thinking_probe", Prompt: "Solve mentally and answer only RP_THINKING_CHECK=<final number>: if x=17 and y=23, compute x*y + 19.", FreshSession: true},
+	{Name: "cache_seed", Prompt: "Remember this exact marker for the next message: RP_CACHE_MARKER=blue-17-river. Reply only RP_CACHE_SEEDED=1.", FreshSession: true},
+	{Name: "cache_recall", Prompt: "Reply only with the marker from the previous message in the format RP_CACHE_MARKER=<marker>."},
 }
 
 func NewDiagnosticRunner(client *http.Client) *DiagnosticRunner {
@@ -496,6 +521,13 @@ func baselineAwareDimensions(runID string, steps []*storage.DiagnosticStep, base
 	out = append(out, scoreServiceTierPresent(runID, steps, baselineSteps, createdAt))
 	out = append(out, scoreAnthropicRequestIDPassthrough(runID, steps, baselineSteps, createdAt))
 	out = append(out, scoreStopReasonPresent(runID, steps, baselineSteps, createdAt))
+	out = append(out, scoreSelfIdentityConsistency(runID, steps, baselineSteps, createdAt))
+	out = append(out, scoreEnvelopeSelfReportMatch(runID, steps, baselineSteps, createdAt))
+	out = append(out, scoreAnthropicMsgIDFormat(runID, steps, baselineSteps, createdAt))
+	out = append(out, scoreInferenceGeoPresent(runID, steps, baselineSteps, createdAt))
+	out = append(out, scoreSystemPromptClean(runID, steps, baselineSteps, createdAt))
+	out = append(out, scoreSDKConsistency(runID, steps, baselineSteps, createdAt))
+	out = append(out, scoreBufferDumpMatch(runID, steps, baselineSteps, createdAt))
 	if candidate, ok := byName["identity"]; ok {
 		out = append(out, scoreIdentityStructuredMatch(runID, candidate, baselineByName["identity"], createdAt))
 	}
@@ -509,6 +541,16 @@ func baselineAwareDimensions(runID string, steps []*storage.DiagnosticStep, base
 	if candidate, ok := byName["knowledge_recall"]; ok {
 		out = append(out, scoreKnowledgeRecallMatch(runID, candidate, baselineByName["knowledge_recall"], createdAt))
 	}
+	if candidate, ok := byName["world_knowledge_tier"]; ok {
+		out = append(out, scoreWorldKnowledgeTierMatch(runID, candidate, baselineByName["world_knowledge_tier"], createdAt))
+	}
+	out = append(out, scoreThinkingPresent(runID, steps, baselineSteps, createdAt))
+	out = append(out, scoreThinkingVolumeMatch(runID, steps, baselineSteps, createdAt))
+	out = append(out, scoreCacheHitRatioMatch(runID, steps, baselineSteps, createdAt))
+	out = append(out, scoreCacheContinuityIntra(runID, steps, baselineSteps, createdAt))
+	out = append(out, scoreCacheSlidingCorrectness(runID, steps, baselineSteps, createdAt))
+	out = append(out, scoreCacheTTLConsistency(runID, steps, baselineSteps, createdAt))
+	out = append(out, scoreTierThinkingVolumeMatch(runID, steps, baselineSteps, createdAt))
 	out = append(out, scoreLatencyBaselineMatch(runID, steps, baselineSteps, createdAt))
 	return out
 }
@@ -618,6 +660,281 @@ func scoreStopReasonPresent(runID string, steps []*storage.DiagnosticStep, basel
 		Evidence: mustJSON(map[string]any{
 			"candidate_reasons": candidateReasons,
 			"baseline_reasons":  baselineReasons,
+		}),
+		CreatedAt: createdAt,
+	}
+}
+
+func scoreSelfIdentityConsistency(runID string, steps []*storage.DiagnosticStep, baselineSteps []*storage.DiagnosticStep, createdAt int64) *storage.DiagnosticDimension {
+	byName := stepMapByName(steps)
+	baselineByName := stepMapByName(baselineSteps)
+	candidateIdentity, candidateOK := extractStructuredIdentity(visibleTextFromStep(byName["identity"]))
+	baselineIdentity, baselineOK := extractStructuredIdentity(visibleTextFromStep(baselineByName["identity"]))
+	candidateFree := visibleTextFromStep(byName["identity_free"])
+	score := 0.0
+	status := "skip"
+	reason := "identity missing"
+	if candidateOK {
+		switch {
+		case identityTextMatches(candidateIdentity, candidateFree):
+			score = 10
+			status = "pass"
+			reason = "structured and free identity report the same family"
+		case baselineOK && identitySameVendorBrand(candidateIdentity, baselineIdentity) && diagnosticModelFamily(candidateIdentity.Model) == diagnosticModelFamily(baselineIdentity.Model):
+			score = 6
+			status = "partial"
+			reason = "candidate matches baseline family but free identity is ambiguous"
+		case baselineOK:
+			score = 0
+			status = "fail"
+			reason = "candidate identity contradicts baseline or self report"
+		default:
+			score = 6
+			status = "partial"
+			reason = "structured identity present but free identity is ambiguous"
+		}
+	}
+	return &storage.DiagnosticDimension{
+		RunID:           runID,
+		DimensionKey:    "self_identity_consistency",
+		Weight:          8,
+		Score:           score,
+		NormalizedScore: score * 10,
+		Status:          status,
+		Reason:          reason,
+		Evidence: mustJSON(map[string]any{
+			"candidate_identity":      candidateIdentity,
+			"baseline_identity":       baselineIdentity,
+			"candidate_identity_free": candidateFree,
+		}),
+		CreatedAt: createdAt,
+	}
+}
+
+func scoreEnvelopeSelfReportMatch(runID string, steps []*storage.DiagnosticStep, baselineSteps []*storage.DiagnosticStep, createdAt int64) *storage.DiagnosticDimension {
+	byName := stepMapByName(steps)
+	identity, identityOK := extractStructuredIdentity(visibleTextFromStep(byName["identity"]))
+	responseModels := collectResponseModels(steps)
+	score := 0.0
+	status := "skip"
+	reason := "response model missing"
+	if identityOK && len(responseModels) > 0 {
+		identityFamily := diagnosticModelFamily(identity.Model)
+		allFamilyMatch := true
+		for _, model := range responseModels {
+			if diagnosticModelFamily(model) != identityFamily {
+				allFamilyMatch = false
+				break
+			}
+		}
+		if allFamilyMatch {
+			score = 10
+			status = "pass"
+			reason = "response envelope model family agrees with text identity"
+		} else {
+			score = 0
+			status = "fail"
+			reason = "response envelope model contradicts text identity"
+		}
+	}
+	return &storage.DiagnosticDimension{
+		RunID:           runID,
+		DimensionKey:    "envelope_self_report_match",
+		Weight:          3,
+		Score:           score,
+		NormalizedScore: score * 10,
+		Status:          status,
+		Reason:          reason,
+		Evidence: mustJSON(map[string]any{
+			"identity":        identity,
+			"response_models": responseModels,
+		}),
+		CreatedAt: createdAt,
+	}
+}
+
+func scoreAnthropicMsgIDFormat(runID string, steps []*storage.DiagnosticStep, baselineSteps []*storage.DiagnosticStep, createdAt int64) *storage.DiagnosticDimension {
+	candidateIDs := collectResponseIDs(steps)
+	baselineIDs := collectResponseIDs(baselineSteps)
+	candidateMsg := containsPrefix(candidateIDs, "msg_")
+	baselineMsg := containsPrefix(baselineIDs, "msg_")
+	score := 0.0
+	status := "skip"
+	reason := "baseline id missing"
+	switch {
+	case baselineMsg && candidateMsg:
+		score = 10
+		status = "pass"
+		reason = "candidate preserves native msg_ id format like baseline"
+	case baselineMsg && len(candidateIDs) > 0:
+		score = 6
+		status = "partial"
+		reason = "candidate exposes stable id but not native msg_ format"
+	case baselineMsg:
+		score = 0
+		status = "fail"
+		reason = "candidate missing msg_ id exposed by baseline"
+	}
+	return &storage.DiagnosticDimension{
+		RunID:           runID,
+		DimensionKey:    "anthropic_msg_id_format",
+		Weight:          8,
+		Score:           score,
+		NormalizedScore: score * 10,
+		Status:          status,
+		Reason:          reason,
+		Evidence: mustJSON(map[string]any{
+			"candidate_ids": candidateIDs,
+			"baseline_ids":  baselineIDs,
+		}),
+		CreatedAt: createdAt,
+	}
+}
+
+func scoreInferenceGeoPresent(runID string, steps []*storage.DiagnosticStep, baselineSteps []*storage.DiagnosticStep, createdAt int64) *storage.DiagnosticDimension {
+	candidateValues := collectInferenceGeoValues(steps)
+	baselineValues := collectInferenceGeoValues(baselineSteps)
+	score := 0.0
+	status := "skip"
+	reason := "baseline geo missing"
+	switch {
+	case len(baselineValues) > 0 && len(candidateValues) > 0:
+		score = 10
+		status = "pass"
+		reason = "candidate exposes geo or trace metadata like baseline"
+	case len(baselineValues) > 0:
+		score = 0
+		status = "fail"
+		reason = "candidate missing geo or trace metadata exposed by baseline"
+	}
+	return &storage.DiagnosticDimension{
+		RunID:           runID,
+		DimensionKey:    "inference_geo_present",
+		Weight:          5,
+		Score:           score,
+		NormalizedScore: score * 10,
+		Status:          status,
+		Reason:          reason,
+		Evidence: mustJSON(map[string]any{
+			"candidate_values": candidateValues,
+			"baseline_values":  baselineValues,
+		}),
+		CreatedAt: createdAt,
+	}
+}
+
+func scoreSystemPromptClean(runID string, steps []*storage.DiagnosticStep, baselineSteps []*storage.DiagnosticStep, createdAt int64) *storage.DiagnosticDimension {
+	candidateSizes := collectRequestBodySizes(steps)
+	baselineSizes := collectRequestBodySizes(baselineSteps)
+	candidateAvg := averageInts(candidateSizes)
+	baselineAvg := averageInts(baselineSizes)
+	score := 0.0
+	status := "skip"
+	reason := "baseline body missing"
+	if candidateAvg > 0 && baselineAvg > 0 {
+		ratio := candidateAvg / baselineAvg
+		switch {
+		case ratio <= 2:
+			score = 10
+			status = "pass"
+			reason = "request body size is within 2x baseline"
+		case ratio <= 4:
+			score = 6
+			status = "partial"
+			reason = "request body size is within 4x baseline"
+		default:
+			score = 0
+			status = "fail"
+			reason = "request body size exceeds 4x baseline"
+		}
+	}
+	return &storage.DiagnosticDimension{
+		RunID:           runID,
+		DimensionKey:    "system_prompt_clean",
+		Weight:          8,
+		Score:           score,
+		NormalizedScore: score * 10,
+		Status:          status,
+		Reason:          reason,
+		Evidence: mustJSON(map[string]any{
+			"candidate_sizes": candidateSizes,
+			"baseline_sizes":  baselineSizes,
+			"candidate_avg":   candidateAvg,
+			"baseline_avg":    baselineAvg,
+		}),
+		CreatedAt: createdAt,
+	}
+}
+
+func scoreSDKConsistency(runID string, steps []*storage.DiagnosticStep, baselineSteps []*storage.DiagnosticStep, createdAt int64) *storage.DiagnosticDimension {
+	values := collectSDKNames(steps)
+	score := 0.0
+	status := "skip"
+	reason := "no sdk markers"
+	switch {
+	case len(values) == 1:
+		score = 10
+		status = "pass"
+		reason = "sdk marker is stable across observed steps"
+	case len(values) > 1:
+		score = 0
+		status = "fail"
+		reason = "multiple conflicting sdk markers observed"
+	}
+	return &storage.DiagnosticDimension{
+		RunID:           runID,
+		DimensionKey:    "sdk_consistency",
+		Weight:          2,
+		Score:           score,
+		NormalizedScore: score * 10,
+		Status:          status,
+		Reason:          reason,
+		Evidence: mustJSON(map[string]any{
+			"candidate_values": values,
+			"baseline_values":  collectSDKNames(baselineSteps),
+		}),
+		CreatedAt: createdAt,
+	}
+}
+
+func scoreBufferDumpMatch(runID string, steps []*storage.DiagnosticStep, baselineSteps []*storage.DiagnosticStep, createdAt int64) *storage.DiagnosticDimension {
+	candidateStats := collectStreamChunkStats(steps)
+	baselineStats := collectStreamChunkStats(baselineSteps)
+	candidateRatio := bufferedRatio(candidateStats)
+	baselineRatio := bufferedRatio(baselineStats)
+	score := 0.0
+	status := "skip"
+	reason := "stream data missing"
+	if candidateStats.StepCount > 0 && baselineStats.StepCount > 0 {
+		diff := absFloat(candidateRatio - baselineRatio)
+		switch {
+		case diff <= 0.20:
+			score = 10
+			status = "pass"
+			reason = "buffered stream ratio is within 20% of baseline"
+		case diff <= 0.50:
+			score = 6
+			status = "partial"
+			reason = "buffered stream ratio is within 50% of baseline"
+		default:
+			score = 0
+			status = "fail"
+			reason = "candidate stream is far more buffered than baseline"
+		}
+	}
+	return &storage.DiagnosticDimension{
+		RunID:           runID,
+		DimensionKey:    "buffer_dump_match",
+		Weight:          5,
+		Score:           score,
+		NormalizedScore: score * 10,
+		Status:          status,
+		Reason:          reason,
+		Evidence: mustJSON(map[string]any{
+			"candidate":       candidateStats,
+			"baseline":        baselineStats,
+			"candidate_ratio": candidateRatio,
+			"baseline_ratio":  baselineRatio,
 		}),
 		CreatedAt: createdAt,
 	}
@@ -771,6 +1088,14 @@ func stepNameForStorageStep(step *storage.DiagnosticStep) string {
 		return "knowledge_recall"
 	case 6:
 		return "digit_count"
+	case 7:
+		return "world_knowledge_tier"
+	case 8:
+		return "thinking_probe"
+	case 9:
+		return "cache_seed"
+	case 10:
+		return "cache_recall"
 	default:
 		return ""
 	}
@@ -936,6 +1261,211 @@ func scoreKnowledgeRecallMatch(runID string, candidate *storage.DiagnosticStep, 
 	}
 }
 
+func scoreWorldKnowledgeTierMatch(runID string, candidate *storage.DiagnosticStep, baseline *storage.DiagnosticStep, createdAt int64) *storage.DiagnosticDimension {
+	candidateText := visibleTextFromStep(candidate)
+	baselineText := visibleTextFromStep(baseline)
+	candidateAnswer, candidateOK := extractTaggedNumber(candidateText, "RP_WORLD_KNOWLEDGE")
+	baselineAnswer, baselineOK := extractTaggedNumber(baselineText, "RP_WORLD_KNOWLEDGE")
+	score := 0.0
+	status := "skip"
+	reason := "world knowledge answer unavailable"
+	if candidateOK && baselineOK {
+		diff := absInt(candidateAnswer - baselineAnswer)
+		switch {
+		case diff == 0:
+			score = 10
+			status = "pass"
+			reason = "candidate world knowledge answer matches baseline"
+		case diff == 1:
+			score = 5
+			status = "partial"
+			reason = "candidate world knowledge answer differs from baseline by 1"
+		default:
+			score = 0
+			status = "fail"
+			reason = "candidate world knowledge answer deviates from baseline"
+		}
+	}
+	return &storage.DiagnosticDimension{
+		RunID:           runID,
+		DimensionKey:    "world_knowledge_tier_match",
+		Weight:          12,
+		Score:           score,
+		NormalizedScore: score * 10,
+		Status:          status,
+		Reason:          reason,
+		Evidence: mustJSON(map[string]any{
+			"candidate_text":   candidateText,
+			"baseline_text":    baselineText,
+			"candidate_answer": candidateAnswer,
+			"baseline_answer":  baselineAnswer,
+		}),
+		CreatedAt: createdAt,
+	}
+}
+
+func scoreThinkingPresent(runID string, steps []*storage.DiagnosticStep, baselineSteps []*storage.DiagnosticStep, createdAt int64) *storage.DiagnosticDimension {
+	candidate := collectThinkingStats(steps)
+	baseline := collectThinkingStats(baselineSteps)
+	score := 0.0
+	status := "skip"
+	reason := "baseline lacks thinking signal"
+	if baseline.Present {
+		if candidate.Present {
+			score = 10
+			status = "pass"
+			reason = "candidate exposes thinking signal like baseline"
+		} else {
+			score = 0
+			status = "fail"
+			reason = "candidate missing thinking signal exposed by baseline"
+		}
+	}
+	return &storage.DiagnosticDimension{
+		RunID:           runID,
+		DimensionKey:    "thinking_present",
+		Weight:          4,
+		Score:           score,
+		NormalizedScore: score * 10,
+		Status:          status,
+		Reason:          reason,
+		Evidence: mustJSON(map[string]any{
+			"candidate": candidate,
+			"baseline":  baseline,
+		}),
+		CreatedAt: createdAt,
+	}
+}
+
+func scoreThinkingVolumeMatch(runID string, steps []*storage.DiagnosticStep, baselineSteps []*storage.DiagnosticStep, createdAt int64) *storage.DiagnosticDimension {
+	candidate := collectThinkingStats(steps)
+	baseline := collectThinkingStats(baselineSteps)
+	score := 0.0
+	status := "skip"
+	reason := "baseline thinking volume unavailable"
+	if baseline.Present && baseline.TokenEstimate > 0 && candidate.Present && candidate.TokenEstimate > 0 {
+		score = relativeVolumeScore(float64(candidate.TokenEstimate), float64(baseline.TokenEstimate))
+		status = classifyMeasuredDimensionScore(score)
+		reason = "candidate thinking volume compared with baseline"
+	} else if baseline.Present && baseline.TokenEstimate > 0 {
+		score = 0
+		status = "fail"
+		reason = "candidate missing measurable thinking volume"
+	}
+	return &storage.DiagnosticDimension{
+		RunID:           runID,
+		DimensionKey:    "thinking_volume_match",
+		Weight:          6,
+		Score:           score,
+		NormalizedScore: score * 10,
+		Status:          status,
+		Reason:          reason,
+		Evidence: mustJSON(map[string]any{
+			"candidate": candidate,
+			"baseline":  baseline,
+		}),
+		CreatedAt: createdAt,
+	}
+}
+
+func scoreCacheHitRatioMatch(runID string, steps []*storage.DiagnosticStep, baselineSteps []*storage.DiagnosticStep, createdAt int64) *storage.DiagnosticDimension {
+	candidate := collectCacheUsageStats(steps)
+	baseline := collectCacheUsageStats(baselineSteps)
+	candidateRatio := cacheReadRatio(candidate)
+	baselineRatio := cacheReadRatio(baseline)
+	score := 0.0
+	status := "skip"
+	reason := "baseline has no cache fields"
+	if baseline.HasCacheFields {
+		diff := absFloat(candidateRatio - baselineRatio)
+		switch {
+		case candidate.HasCacheFields && diff <= 0.20:
+			score = 10
+			status = "pass"
+			reason = "candidate cache read ratio is within 20% of baseline"
+		case candidate.HasCacheFields && diff <= 0.50:
+			score = 6
+			status = "partial"
+			reason = "candidate cache read ratio is within 50% of baseline"
+		default:
+			score = 0
+			status = "fail"
+			reason = "candidate cache read ratio deviates from baseline"
+		}
+	}
+	return &storage.DiagnosticDimension{
+		RunID:           runID,
+		DimensionKey:    "cache_hit_ratio_match",
+		Weight:          20,
+		Score:           score,
+		NormalizedScore: score * 10,
+		Status:          status,
+		Reason:          reason,
+		Evidence: mustJSON(map[string]any{
+			"candidate":       candidate,
+			"baseline":        baseline,
+			"candidate_ratio": candidateRatio,
+			"baseline_ratio":  baselineRatio,
+		}),
+		CreatedAt: createdAt,
+	}
+}
+
+func scoreCacheContinuityIntra(runID string, steps []*storage.DiagnosticStep, baselineSteps []*storage.DiagnosticStep, createdAt int64) *storage.DiagnosticDimension {
+	byName := stepMapByName(steps)
+	baselineByName := stepMapByName(baselineSteps)
+	candidateText := visibleTextFromStep(byName["cache_recall"])
+	baselineText := visibleTextFromStep(baselineByName["cache_recall"])
+	score := 0.0
+	status := "fail"
+	reason := "candidate failed to recall same-session cache marker"
+	if strings.Contains(candidateText, "RP_CACHE_MARKER=blue-17-river") {
+		score = 10
+		status = "pass"
+		reason = "candidate recalled same-session cache marker"
+	}
+	return &storage.DiagnosticDimension{
+		RunID:           runID,
+		DimensionKey:    "cache_continuity_intra",
+		Weight:          14,
+		Score:           score,
+		NormalizedScore: score * 10,
+		Status:          status,
+		Reason:          reason,
+		Evidence: mustJSON(map[string]any{
+			"candidate_text": candidateText,
+			"baseline_text":  baselineText,
+		}),
+		CreatedAt: createdAt,
+	}
+}
+
+func scoreCacheSlidingCorrectness(runID string, steps []*storage.DiagnosticStep, baselineSteps []*storage.DiagnosticStep, createdAt int64) *storage.DiagnosticDimension {
+	return skippedPhase2Dimension(runID, "cache_sliding_correctness", 13, "requires scheduled repeated probes across cache TTL windows", createdAt)
+}
+
+func scoreCacheTTLConsistency(runID string, steps []*storage.DiagnosticStep, baselineSteps []*storage.DiagnosticStep, createdAt int64) *storage.DiagnosticDimension {
+	return skippedPhase2Dimension(runID, "cache_ttl_consistency", 15, "requires scheduled repeated probes across cache TTL windows", createdAt)
+}
+
+func scoreTierThinkingVolumeMatch(runID string, steps []*storage.DiagnosticStep, baselineSteps []*storage.DiagnosticStep, createdAt int64) *storage.DiagnosticDimension {
+	return skippedPhase2Dimension(runID, "tier_thinking_volume_match", 8, "requires cross-tier baseline set", createdAt)
+}
+
+func skippedPhase2Dimension(runID, key string, weight int, reason string, createdAt int64) *storage.DiagnosticDimension {
+	return &storage.DiagnosticDimension{
+		RunID:           runID,
+		DimensionKey:    key,
+		Weight:          weight,
+		Score:           0,
+		NormalizedScore: 0,
+		Status:          "skip",
+		Reason:          reason,
+		Evidence:        mustJSON(map[string]any{"reason": reason}),
+		CreatedAt:       createdAt,
+	}
+}
+
 func scoreLatencyBaselineMatch(runID string, steps []*storage.DiagnosticStep, baselineSteps []*storage.DiagnosticStep, createdAt int64) *storage.DiagnosticDimension {
 	candidateMedians := diagnosticLatencyStats(steps)
 	baselineMedians := diagnosticLatencyStats(baselineSteps)
@@ -1034,6 +1564,19 @@ func extractKnowledgeRecallValue(text string) (int, bool) {
 		return 0, false
 	}
 	value, err := strconv.Atoi(match)
+	if err != nil {
+		return 0, false
+	}
+	return value, true
+}
+
+func extractTaggedNumber(text, tag string) (int, bool) {
+	pattern := regexp.MustCompile(regexp.QuoteMeta(tag) + `\s*=\s*(-?\d+)`)
+	match := pattern.FindStringSubmatch(text)
+	if len(match) < 2 {
+		return 0, false
+	}
+	value, err := strconv.Atoi(match[1])
 	if err != nil {
 		return 0, false
 	}
@@ -1215,6 +1758,169 @@ func collectRequestIDChain(steps []*storage.DiagnosticStep) []string {
 	return uniqueSortedStrings(values)
 }
 
+func collectResponseIDs(steps []*storage.DiagnosticStep) []string {
+	values := make([]string, 0, len(steps))
+	idPattern := regexp.MustCompile(`\b(?:msg_|chatcmpl-|gen-)[A-Za-z0-9._:-]+`)
+	for _, step := range steps {
+		if step == nil {
+			continue
+		}
+		meta := decodeStepMeta(step.ExecutionMeta)
+		for _, key := range []string{"response_text", "response_model", "response_id", "id", "message_id"} {
+			if value := strings.TrimSpace(fmt.Sprint(meta[key])); value != "" && !strings.EqualFold(value, "<nil>") {
+				values = append(values, idPattern.FindAllString(value, -1)...)
+			}
+		}
+		if headers := mapFromMeta(meta, "response_headers"); len(headers) > 0 {
+			for _, value := range headers {
+				values = append(values, idPattern.FindAllString(fmt.Sprint(value), -1)...)
+			}
+		}
+		if raw, err := json.Marshal(meta); err == nil {
+			values = append(values, idPattern.FindAllString(string(raw), -1)...)
+		}
+	}
+	return uniqueSortedStrings(values)
+}
+
+func collectInferenceGeoValues(steps []*storage.DiagnosticStep) []string {
+	keys := []string{"cf-ray", "x-vercel-id", "x-amzn-trace-id", "x-request-id", "inference_region", "region", "geo"}
+	values := make([]string, 0, len(steps))
+	for _, step := range steps {
+		if step == nil {
+			continue
+		}
+		meta := decodeStepMeta(step.ExecutionMeta)
+		if headers := mapFromMeta(meta, "response_headers"); len(headers) > 0 {
+			for key, value := range headers {
+				if containsAnyFold(key, keys) {
+					values = append(values, splitHeaderValues(fmt.Sprint(value))...)
+				}
+			}
+		}
+		collectValuesForKeys(meta, keys, &values)
+	}
+	return uniqueSortedStrings(values)
+}
+
+func collectSDKNames(steps []*storage.DiagnosticStep) []string {
+	keys := []string{"sdk_name", "x-stainless-lang", "anthropic-version", "user-agent"}
+	values := make([]string, 0, len(steps))
+	for _, step := range steps {
+		if step == nil {
+			continue
+		}
+		meta := decodeStepMeta(step.ExecutionMeta)
+		if headers := mapFromMeta(meta, "response_headers"); len(headers) > 0 {
+			for key, value := range headers {
+				if containsAnyFold(key, keys) {
+					values = append(values, splitHeaderValues(fmt.Sprint(value))...)
+				}
+			}
+		}
+		if requestBody := mapFromMeta(meta, "request_body"); len(requestBody) > 0 {
+			collectValuesForKeys(requestBody, keys, &values)
+		}
+		collectValuesForKeys(meta, keys, &values)
+	}
+	return uniqueSortedStrings(values)
+}
+
+func collectStreamChunkStats(steps []*storage.DiagnosticStep) streamChunkStats {
+	var stats streamChunkStats
+	for _, step := range steps {
+		if step == nil {
+			continue
+		}
+		meta := decodeStepMeta(step.ExecutionMeta)
+		chunks := sliceFromMeta(meta, "stream_chunks")
+		if len(chunks) == 0 {
+			continue
+		}
+		stats.StepCount++
+		stats.ChunkCounts = append(stats.ChunkCounts, len(chunks))
+		if len(chunks) <= 1 {
+			stats.BufferedSteps++
+		}
+		visibleSpans := 0
+		for _, chunk := range chunks {
+			if strings.TrimSpace(visibleTextFromRaw(fmt.Sprint(chunk))) != "" || strings.TrimSpace(fmt.Sprint(chunk)) != "" {
+				visibleSpans++
+			}
+		}
+		stats.VisibleTextSpans = append(stats.VisibleTextSpans, visibleSpans)
+	}
+	return stats
+}
+
+func collectRequestBodySizes(steps []*storage.DiagnosticStep) []int {
+	sizes := make([]int, 0, len(steps))
+	for _, step := range steps {
+		if step == nil {
+			continue
+		}
+		meta := decodeStepMeta(step.ExecutionMeta)
+		body, ok := meta["request_body"]
+		if !ok || body == nil {
+			continue
+		}
+		switch v := body.(type) {
+		case string:
+			if strings.TrimSpace(v) != "" {
+				sizes = append(sizes, len([]byte(v)))
+			}
+		default:
+			if raw, err := json.Marshal(v); err == nil && len(raw) > 0 && string(raw) != "null" {
+				sizes = append(sizes, len(raw))
+			}
+		}
+	}
+	return sizes
+}
+
+func collectCacheUsageStats(steps []*storage.DiagnosticStep) cacheUsageStats {
+	var stats cacheUsageStats
+	for _, step := range steps {
+		if step == nil {
+			continue
+		}
+		meta := decodeStepMeta(step.ExecutionMeta)
+		usage := mapFromMeta(meta, "usage")
+		if len(usage) == 0 {
+			continue
+		}
+		stats.InputTokens += int(firstNumberFromMap(usage, "input_tokens", "prompt_tokens"))
+		read := firstNumberFromMap(usage, "cache_read_input_tokens", "cache_read", "cache_tokens")
+		create := firstNumberFromMap(usage, "cache_creation_input_tokens", "cache_create_tokens")
+		if read > 0 || create > 0 || hasAnyKeyFold(usage, []string{"cache_read_input_tokens", "cache_read", "cache_tokens", "cache_creation_input_tokens", "cache_create_tokens"}) {
+			stats.HasCacheFields = true
+		}
+		stats.CacheReadTokens += int(read)
+		stats.CacheCreateTokens += int(create)
+	}
+	return stats
+}
+
+func collectThinkingStats(steps []*storage.DiagnosticStep) thinkingStats {
+	var stats thinkingStats
+	blockTypes := make([]string, 0)
+	for _, step := range steps {
+		if step == nil {
+			continue
+		}
+		meta := decodeStepMeta(step.ExecutionMeta)
+		collectThinkingFromAny(meta, &stats, &blockTypes)
+		if text := strings.TrimSpace(fmt.Sprint(meta["response_text"])); text != "" && !strings.EqualFold(text, "<nil>") {
+			collectThinkingFromText(text, &stats)
+		}
+	}
+	stats.BlockTypes = uniqueSortedStrings(blockTypes)
+	if stats.TokenEstimate == 0 && stats.TextLength > 0 {
+		stats.TokenEstimate = estimateTokensFromTextLength(stats.TextLength)
+	}
+	return stats
+}
+
 func collectFinishReasons(steps []*storage.DiagnosticStep) []string {
 	values := make([]string, 0, len(steps))
 	for _, step := range steps {
@@ -1257,6 +1963,110 @@ func containsReqID(values []string) bool {
 		}
 	}
 	return false
+}
+
+func containsPrefix(values []string, prefix string) bool {
+	for _, value := range values {
+		if strings.HasPrefix(strings.TrimSpace(value), prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func collectResponseModels(steps []*storage.DiagnosticStep) []string {
+	values := make([]string, 0, len(steps))
+	for _, step := range steps {
+		if step == nil {
+			continue
+		}
+		if model := responseModelFromMeta(decodeStepMeta(step.ExecutionMeta)); model != "" {
+			values = append(values, model)
+		}
+	}
+	return uniqueSortedStrings(values)
+}
+
+func identitySameVendorBrand(a, b structuredIdentity) bool {
+	return strings.EqualFold(strings.TrimSpace(a.Vendor), strings.TrimSpace(b.Vendor)) &&
+		strings.EqualFold(strings.TrimSpace(a.Brand), strings.TrimSpace(b.Brand))
+}
+
+func identityTextMatches(identity structuredIdentity, text string) bool {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if lower == "" {
+		return false
+	}
+	vendor := strings.ToLower(strings.TrimSpace(identity.Vendor))
+	brand := strings.ToLower(strings.TrimSpace(identity.Brand))
+	family := diagnosticModelFamily(identity.Model)
+	if vendor != "" && !strings.Contains(lower, vendor) {
+		return false
+	}
+	if brand != "" && !strings.Contains(lower, brand) {
+		return false
+	}
+	if family != "" && strings.Contains(lower, family) {
+		return true
+	}
+	model := strings.ToLower(strings.TrimSpace(identity.Model))
+	return model != "" && strings.Contains(lower, model)
+}
+
+func averageInts(values []int) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	total := 0
+	for _, value := range values {
+		total += value
+	}
+	return float64(total) / float64(len(values))
+}
+
+func bufferedRatio(stats streamChunkStats) float64 {
+	if stats.StepCount <= 0 {
+		return 0
+	}
+	return float64(stats.BufferedSteps) / float64(stats.StepCount)
+}
+
+func cacheReadRatio(stats cacheUsageStats) float64 {
+	if stats.InputTokens <= 0 {
+		return 0
+	}
+	return float64(stats.CacheReadTokens) / float64(stats.InputTokens)
+}
+
+func relativeVolumeScore(candidate, baseline float64) float64 {
+	if candidate <= 0 || baseline <= 0 {
+		return 0
+	}
+	ratio := candidate / baseline
+	if ratio < 1 {
+		ratio = 1 / ratio
+	}
+	if ratio <= 1.2 {
+		return 10
+	}
+	if ratio <= 2 {
+		return 6
+	}
+	return 0
+}
+
+func absInt(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
+}
+
+func absFloat(value float64) float64 {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
 
 func averageNonZero(values ...float64) float64 {
@@ -1728,6 +2538,173 @@ func numberFromAny(v any) (int64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func mapFromMeta(meta map[string]any, key string) map[string]any {
+	if len(meta) == 0 {
+		return nil
+	}
+	switch v := meta[key].(type) {
+	case map[string]any:
+		return v
+	case map[string]string:
+		out := make(map[string]any, len(v))
+		for key, value := range v {
+			out[key] = value
+		}
+		return out
+	case json.RawMessage:
+		var out map[string]any
+		if err := json.Unmarshal(v, &out); err == nil {
+			return out
+		}
+	case string:
+		var out map[string]any
+		if err := json.Unmarshal([]byte(v), &out); err == nil {
+			return out
+		}
+	}
+	return nil
+}
+
+func sliceFromMeta(meta map[string]any, key string) []any {
+	if len(meta) == 0 {
+		return nil
+	}
+	switch v := meta[key].(type) {
+	case []any:
+		return v
+	case []string:
+		out := make([]any, 0, len(v))
+		for _, item := range v {
+			out = append(out, item)
+		}
+		return out
+	case json.RawMessage:
+		var out []any
+		if err := json.Unmarshal(v, &out); err == nil {
+			return out
+		}
+	case string:
+		var out []any
+		if err := json.Unmarshal([]byte(v), &out); err == nil {
+			return out
+		}
+	}
+	return nil
+}
+
+func containsAnyFold(value string, needles []string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	for _, needle := range needles {
+		if strings.Contains(value, strings.ToLower(strings.TrimSpace(needle))) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAnyKeyFold(m map[string]any, keys []string) bool {
+	for key := range m {
+		for _, wanted := range keys {
+			if strings.EqualFold(strings.TrimSpace(key), strings.TrimSpace(wanted)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func firstNumberFromMap(m map[string]any, keys ...string) int64 {
+	for _, wanted := range keys {
+		for key, value := range m {
+			if !strings.EqualFold(strings.TrimSpace(key), strings.TrimSpace(wanted)) {
+				continue
+			}
+			if number, ok := numberFromAny(value); ok {
+				return number
+			}
+		}
+	}
+	return 0
+}
+
+func collectValuesForKeys(v any, keys []string, values *[]string) {
+	switch typed := v.(type) {
+	case map[string]any:
+		for key, value := range typed {
+			if containsAnyFold(key, keys) {
+				text := strings.TrimSpace(fmt.Sprint(value))
+				if text != "" && !strings.EqualFold(text, "<nil>") {
+					*values = append(*values, splitHeaderValues(text)...)
+				}
+			}
+			collectValuesForKeys(value, keys, values)
+		}
+	case []any:
+		for _, item := range typed {
+			collectValuesForKeys(item, keys, values)
+		}
+	}
+}
+
+func collectThinkingFromAny(v any, stats *thinkingStats, blockTypes *[]string) {
+	switch typed := v.(type) {
+	case map[string]any:
+		for key, value := range typed {
+			lowerKey := strings.ToLower(strings.TrimSpace(key))
+			if lowerKey == "type" {
+				if text := strings.TrimSpace(fmt.Sprint(value)); text != "" {
+					*blockTypes = append(*blockTypes, text)
+					if strings.EqualFold(text, "thinking") || strings.Contains(strings.ToLower(text), "reasoning") {
+						stats.Present = true
+					}
+				}
+			}
+			if strings.Contains(lowerKey, "thinking") || strings.Contains(lowerKey, "reasoning") {
+				stats.Present = true
+				switch value := value.(type) {
+				case string:
+					stats.TextLength += len([]rune(value))
+				default:
+					if number, ok := numberFromAny(value); ok {
+						stats.TokenEstimate += int(number)
+					}
+				}
+			}
+			collectThinkingFromAny(value, stats, blockTypes)
+		}
+	case []any:
+		for _, item := range typed {
+			collectThinkingFromAny(item, stats, blockTypes)
+		}
+	case string:
+		collectThinkingFromText(typed, stats)
+	}
+}
+
+func collectThinkingFromText(text string, stats *thinkingStats) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return
+	}
+	lower := strings.ToLower(trimmed)
+	if !strings.Contains(lower, "thinking") && !strings.Contains(lower, "reasoning") && !strings.Contains(lower, "reasoning_content") {
+		return
+	}
+	stats.Present = true
+	stats.TextLength += len([]rune(trimmed))
+}
+
+func estimateTokensFromTextLength(length int) int {
+	if length <= 0 {
+		return 0
+	}
+	tokens := length / 4
+	if tokens == 0 {
+		return 1
+	}
+	return tokens
 }
 
 func mustJSON(v any) json.RawMessage {

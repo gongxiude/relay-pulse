@@ -101,7 +101,7 @@ func TestDiagnosticRunner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListDiagnosticSteps: %v", err)
 	}
-	if len(steps) != 6 {
+	if len(steps) != 10 {
 		t.Fatalf("steps=%d", len(steps))
 	}
 	score, err := store.GetDiagnosticScore(run.RunID)
@@ -151,6 +151,275 @@ func testOpenAIChatDiagnosticTemplate() *config.ProbeTemplate {
 		RequestFamily:  "openai_chat",
 		OverridePaths:  map[string]string{"model": "$.model", "messages": "$.messages", "stream": "$.stream"},
 		ResponseParser: "openai_chat_sse",
+	}
+}
+
+func TestPhase2EvidenceExtraction(t *testing.T) {
+	steps := []*storage.DiagnosticStep{
+		{
+			RunID:     "run-1",
+			StepIndex: 1,
+			ExecutionMeta: mustJSON(map[string]any{
+				"response_headers": map[string]string{
+					"x-request-id":     "req_01abc",
+					"cf-ray":           "abc-SJC",
+					"x-stainless-lang": "go",
+				},
+				"usage": map[string]any{
+					"input_tokens":                100,
+					"cache_read_input_tokens":     40,
+					"cache_creation_input_tokens": 10,
+				},
+				"stream_chunks": []string{"a", "b", "c"},
+				"request_body":  map[string]any{"model": "claude-opus-4-6"},
+				"response_text": `{"id":"msg_01abc","thinking":"hidden chain"}`,
+			}),
+		},
+	}
+	if got := collectResponseIDs(steps); len(got) == 0 {
+		t.Fatalf("expected response ids")
+	}
+	if got := collectInferenceGeoValues(steps); len(got) == 0 {
+		t.Fatalf("expected geo values")
+	}
+	if got := collectSDKNames(steps); len(got) == 0 {
+		t.Fatalf("expected sdk names")
+	}
+	if got := collectStreamChunkStats(steps); got.BufferedSteps != 0 || len(got.ChunkCounts) != 1 {
+		t.Fatalf("unexpected stream stats: %+v", got)
+	}
+	if got := collectCacheUsageStats(steps); !got.HasCacheFields || got.CacheReadTokens != 40 {
+		t.Fatalf("unexpected cache stats: %+v", got)
+	}
+	if got := collectThinkingStats(steps); !got.Present {
+		t.Fatalf("expected thinking stats")
+	}
+}
+
+func TestBuildDimensionsForRunWithPhase2ExistingEvidence(t *testing.T) {
+	candidateSteps := []*storage.DiagnosticStep{
+		{
+			RunID:     "candidate",
+			StepIndex: 2,
+			ExecutionMeta: mustJSON(map[string]any{
+				"step_name":      "identity",
+				"response_model": "claude-opus-4-6",
+				"response_id":    "msg_01candidate",
+				"response_text":  "vendor: Anthropic\nbrand: Claude\nmodel: Claude Opus 4",
+				"response_headers": map[string]string{
+					"x-request-id":     "req_01candidate",
+					"cf-ray":           "abc-SJC",
+					"x-stainless-lang": "go",
+				},
+				"request_body":  map[string]any{"model": "claude-opus-4-6", "messages": []any{}},
+				"stream_chunks": []string{"a", "b", "c"},
+			}),
+		},
+	}
+	baselineSteps := []*storage.DiagnosticStep{
+		{
+			RunID:     "baseline",
+			StepIndex: 2,
+			ExecutionMeta: mustJSON(map[string]any{
+				"step_name":      "identity",
+				"response_model": "claude-opus-4-6",
+				"response_id":    "msg_01baseline",
+				"response_text":  "vendor: Anthropic\nbrand: Claude\nmodel: Claude Opus 4",
+				"response_headers": map[string]string{
+					"x-request-id":     "req_01baseline",
+					"cf-ray":           "xyz-SJC",
+					"x-stainless-lang": "go",
+				},
+				"request_body":  map[string]any{"model": "claude-opus-4-6", "messages": []any{}},
+				"stream_chunks": []string{"a", "b", "c"},
+			}),
+		},
+	}
+	dimensions := buildDimensionsForRun("run-1", &storage.DiagnosticScore{AuthenticityScore: 90, ProtocolScore: 90, SSEScore: 90}, nil, candidateSteps, baselineSteps, 1710000000)
+	found := make(map[string]*storage.DiagnosticDimension, len(dimensions))
+	for _, dimension := range dimensions {
+		found[dimension.DimensionKey] = dimension
+	}
+	for _, key := range []string{
+		"self_identity_consistency",
+		"envelope_self_report_match",
+		"anthropic_msg_id_format",
+		"inference_geo_present",
+		"system_prompt_clean",
+		"sdk_consistency",
+		"buffer_dump_match",
+	} {
+		if found[key] == nil {
+			t.Fatalf("missing dimension %s", key)
+		}
+		if found[key].Status == "skip" {
+			t.Fatalf("dimension %s skipped unexpectedly: %+v", key, found[key])
+		}
+	}
+}
+
+func TestPhase2WorldKnowledgeAndThinkingScorers(t *testing.T) {
+	candidateSteps := []*storage.DiagnosticStep{
+		{
+			RunID:     "candidate",
+			StepIndex: 7,
+			ExecutionMeta: mustJSON(map[string]any{
+				"step_name":     "world_knowledge_tier",
+				"response_text": "RP_WORLD_KNOWLEDGE=5",
+			}),
+		},
+		{
+			RunID:     "candidate",
+			StepIndex: 8,
+			ExecutionMeta: mustJSON(map[string]any{
+				"step_name":     "thinking_probe",
+				"response_text": "reasoning_content: compact hidden reasoning",
+				"content": []any{
+					map[string]any{"type": "thinking", "text": "hidden reasoning"},
+					map[string]any{"type": "text", "text": "RP_THINKING_CHECK=410"},
+				},
+			}),
+		},
+	}
+	baselineSteps := []*storage.DiagnosticStep{
+		{
+			RunID:     "baseline",
+			StepIndex: 7,
+			ExecutionMeta: mustJSON(map[string]any{
+				"step_name":     "world_knowledge_tier",
+				"response_text": "RP_WORLD_KNOWLEDGE=5",
+			}),
+		},
+		{
+			RunID:     "baseline",
+			StepIndex: 8,
+			ExecutionMeta: mustJSON(map[string]any{
+				"step_name":     "thinking_probe",
+				"response_text": "reasoning_content: compact hidden reasoning",
+				"content": []any{
+					map[string]any{"type": "thinking", "text": "hidden reasoning"},
+					map[string]any{"type": "text", "text": "RP_THINKING_CHECK=410"},
+				},
+			}),
+		},
+	}
+	dimensions := buildDimensionsForRun("run-1", &storage.DiagnosticScore{AuthenticityScore: 90, ProtocolScore: 90, SSEScore: 90}, nil, candidateSteps, baselineSteps, 1710000000)
+	found := make(map[string]*storage.DiagnosticDimension, len(dimensions))
+	for _, dimension := range dimensions {
+		found[dimension.DimensionKey] = dimension
+	}
+	if found["world_knowledge_tier_match"] == nil || found["world_knowledge_tier_match"].Status != "pass" {
+		t.Fatalf("unexpected world_knowledge_tier_match: %+v", found["world_knowledge_tier_match"])
+	}
+	for _, key := range []string{"thinking_present", "thinking_volume_match"} {
+		if found[key] == nil {
+			t.Fatalf("missing dimension %s", key)
+		}
+		if found[key].Status == "skip" {
+			t.Fatalf("dimension %s skipped unexpectedly: %+v", key, found[key])
+		}
+	}
+}
+
+func TestPhase2CacheScorers(t *testing.T) {
+	candidateSteps := []*storage.DiagnosticStep{
+		{
+			RunID:     "candidate",
+			StepIndex: 9,
+			ExecutionMeta: mustJSON(map[string]any{
+				"step_name": "cache_seed",
+				"usage": map[string]any{
+					"input_tokens":            100,
+					"cache_read_input_tokens": 30,
+				},
+				"response_text": "RP_CACHE_SEEDED=1",
+			}),
+		},
+		{
+			RunID:     "candidate",
+			StepIndex: 10,
+			ExecutionMeta: mustJSON(map[string]any{
+				"step_name":     "cache_recall",
+				"response_text": "RP_CACHE_MARKER=blue-17-river",
+			}),
+		},
+	}
+	baselineSteps := []*storage.DiagnosticStep{
+		{
+			RunID:     "baseline",
+			StepIndex: 9,
+			ExecutionMeta: mustJSON(map[string]any{
+				"step_name": "cache_seed",
+				"usage": map[string]any{
+					"input_tokens":            100,
+					"cache_read_input_tokens": 30,
+				},
+				"response_text": "RP_CACHE_SEEDED=1",
+			}),
+		},
+		{
+			RunID:     "baseline",
+			StepIndex: 10,
+			ExecutionMeta: mustJSON(map[string]any{
+				"step_name":     "cache_recall",
+				"response_text": "RP_CACHE_MARKER=blue-17-river",
+			}),
+		},
+	}
+	dimensions := buildDimensionsForRun("run-1", &storage.DiagnosticScore{AuthenticityScore: 90, ProtocolScore: 90, SSEScore: 90}, nil, candidateSteps, baselineSteps, 1710000000)
+	found := make(map[string]*storage.DiagnosticDimension, len(dimensions))
+	for _, dimension := range dimensions {
+		found[dimension.DimensionKey] = dimension
+	}
+	for _, key := range []string{"cache_hit_ratio_match", "cache_continuity_intra"} {
+		if found[key] == nil || found[key].Status != "pass" {
+			t.Fatalf("unexpected %s: %+v", key, found[key])
+		}
+	}
+	for _, key := range []string{"cache_sliding_correctness", "cache_ttl_consistency", "tier_thinking_volume_match"} {
+		if found[key] == nil || found[key].Status != "skip" {
+			t.Fatalf("expected inactive skip %s: %+v", key, found[key])
+		}
+	}
+}
+
+func TestMethodologyPhase2Summary(t *testing.T) {
+	spec := CurrentMethodologySpec()
+	if spec.ImplementedCount != 25 {
+		t.Fatalf("ImplementedCount=%d, want 25", spec.ImplementedCount)
+	}
+	if spec.ActiveCount != 22 {
+		t.Fatalf("ActiveCount=%d, want 22", spec.ActiveCount)
+	}
+	if spec.TotalWeight != 200 {
+		t.Fatalf("TotalWeight=%d, want 200", spec.TotalWeight)
+	}
+	if spec.ImplementedWeight != 200 {
+		t.Fatalf("ImplementedWeight=%d, want 200", spec.ImplementedWeight)
+	}
+	if spec.ActiveWeight != 164 {
+		t.Fatalf("ActiveWeight=%d, want 164", spec.ActiveWeight)
+	}
+	unimplemented := make([]string, 0)
+	inactive := make([]string, 0)
+	for _, dimension := range spec.Dimensions {
+		if !dimension.Implemented {
+			unimplemented = append(unimplemented, dimension.Key)
+		}
+		if dimension.Implemented && !dimension.Active {
+			inactive = append(inactive, dimension.Key)
+		}
+	}
+	if len(unimplemented) != 0 {
+		t.Fatalf("unexpected unimplemented dimensions: %v", unimplemented)
+	}
+	for _, key := range []string{"cache_sliding_correctness", "cache_ttl_consistency", "tier_thinking_volume_match"} {
+		if !stringSliceContains(inactive, key) {
+			t.Fatalf("expected inactive %s in %v", key, inactive)
+		}
+	}
+	if len(inactive) != 3 {
+		t.Fatalf("unexpected inactive dimensions: %v", inactive)
 	}
 }
 
@@ -406,7 +675,7 @@ func TestBuildDimensionsForRunWithBaselineAwareScorers(t *testing.T) {
 	}
 
 	dimensions := buildDimensionsForRun("run-1", score, []string{"buffered_stream"}, candidateSteps, baselineSteps, 1710000200)
-	if len(dimensions) != 13 {
+	if len(dimensions) != 27 {
 		t.Fatalf("unexpected dimensions len: %d", len(dimensions))
 	}
 	found := make(map[string]*storage.DiagnosticDimension, len(dimensions))
@@ -444,8 +713,13 @@ func TestBuildDimensionsForRunWithBaselineAwareScorers(t *testing.T) {
 		t.Fatalf("unexpected latency_baseline_match: %+v", found["latency_baseline_match"])
 	}
 	overall, activeWeight, skipped := dimensionScoringSummary(dimensions)
-	if overall <= 0 || activeWeight <= 0 || len(skipped) != 0 {
+	if overall <= 0 || activeWeight <= 0 {
 		t.Fatalf("unexpected scoring summary: overall=%v active=%d skipped=%v", overall, activeWeight, skipped)
+	}
+	for _, key := range []string{"anthropic_msg_id_format", "buffer_dump_match", "inference_geo_present", "sdk_consistency"} {
+		if !stringSliceContains(skipped, key) {
+			t.Fatalf("expected skipped %s in %v", key, skipped)
+		}
 	}
 }
 
@@ -461,4 +735,13 @@ func newDiagnosticStore(t *testing.T) *storage.SQLiteStorage {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	return store
+}
+
+func stringSliceContains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
