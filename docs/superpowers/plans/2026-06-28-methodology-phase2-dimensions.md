@@ -1,6 +1,6 @@
 # Methodology Phase2 Dimensions Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 补齐“检测方法”页面中当前未实现的 15 个 phase2 检测维度，并让页面统计从 `10/25` 逐步提升到对应已实现数量。
 
@@ -176,7 +176,7 @@ active_count: 21-25
 - Modify: `internal/audit/diagnostic_runner.go`
 - Test: `internal/audit/diagnostic_runner_test.go`
 
-- [ ] **Step 1: Add helper function signatures**
+- [x] **Step 1: Add helper function signatures**
 
 Add helpers near existing metadata helpers such as `collectServiceTierValues`, `collectRequestIDChain`, and `visibleTextFromStep`:
 
@@ -215,7 +215,7 @@ type thinkingStats struct {
 }
 ```
 
-- [ ] **Step 2: Implement helper behavior**
+- [x] **Step 2: Implement helper behavior**
 
 Extraction rules:
 
@@ -273,7 +273,7 @@ reasoning_content
 content[].type == "thinking"
 ```
 
-- [ ] **Step 3: Add helper tests**
+- [x] **Step 3: Add helper tests**
 
 Add tests in `internal/audit/diagnostic_runner_test.go`:
 
@@ -321,7 +321,7 @@ func TestPhase2EvidenceExtraction(t *testing.T) {
 }
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run:
 
@@ -343,7 +343,7 @@ PASS
 - Modify: `internal/audit/diagnostic_runner.go`
 - Test: `internal/audit/diagnostic_runner_test.go`
 
-- [ ] **Step 1: Add scorer functions**
+- [x] **Step 1: Add scorer functions**
 
 Add these functions:
 
@@ -369,7 +369,7 @@ Scoring rules:
 | `sdk_consistency` | same sdk marker across all steps | one missing value | multiple conflicting sdk markers | no sdk markers |
 | `buffer_dump_match` | buffered ratio within 20% baseline | within 50% baseline | candidate far more buffered | stream data missing |
 
-- [ ] **Step 2: Add scorers to `baselineAwareDimensions`**
+- [x] **Step 2: Add scorers to `baselineAwareDimensions`**
 
 Append after current phase1 dimensions:
 
@@ -383,7 +383,7 @@ Append after current phase1 dimensions:
 	out = append(out, scoreBufferDumpMatch(runID, steps, baselineSteps, createdAt))
 ```
 
-- [ ] **Step 3: Add scorer table test**
+- [x] **Step 3: Add scorer table test**
 
 Add:
 
@@ -441,7 +441,7 @@ func TestBuildDimensionsForRunWithPhase2ExistingEvidence(t *testing.T) {
 }
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run:
 
@@ -463,7 +463,7 @@ PASS
 - Modify: `internal/audit/methodology.go`
 - Test: `internal/audit/diagnostic_runner_test.go`
 
-- [ ] **Step 1: Flip implemented flags**
+- [x] **Step 1: Flip implemented flags**
 
 In `internal/audit/methodology.go`, set these to `Implemented: true, Active: true`:
 
@@ -477,7 +477,7 @@ sdk_consistency
 buffer_dump_match
 ```
 
-- [ ] **Step 2: Run methodology API locally or unit test by package**
+- [x] **Step 2: Run methodology API locally or unit test by package**
 
 Run:
 
@@ -509,7 +509,7 @@ active_weight: 107
 - Modify: `internal/audit/diagnostic_runner.go`
 - Test: `internal/audit/diagnostic_runner_test.go`
 
-- [ ] **Step 1: Extend quick probe steps**
+- [x] **Step 1: Extend quick probe steps**
 
 Add step definitions to `quickProbeSteps`:
 
@@ -528,7 +528,7 @@ Add step definitions to `quickProbeSteps`:
 
 Use deterministic factual/math probes. Do not ask the model to reveal chain-of-thought.
 
-- [ ] **Step 2: Update `stepNameForStorageStep` fallback**
+- [x] **Step 2: Update `stepNameForStorageStep` fallback**
 
 Extend fallback mapping for new indexes if needed:
 
@@ -539,7 +539,7 @@ case 8:
 	return "thinking_probe"
 ```
 
-- [ ] **Step 3: Add scorers**
+- [x] **Step 3: Add scorers**
 
 Add:
 
@@ -555,7 +555,7 @@ Rules:
 - `thinking_present`: pass only when baseline has thinking signal and candidate has comparable signal; skip when baseline lacks thinking signal.
 - `thinking_volume_match`: compare `thinkingStats.TokenEstimate` or text length against baseline using `relativeSimilarityScore`.
 
-- [ ] **Step 4: Append scorers to `baselineAwareDimensions`**
+- [x] **Step 4: Append scorers to `baselineAwareDimensions`**
 
 Add:
 
@@ -567,13 +567,13 @@ Add:
 	out = append(out, scoreThinkingVolumeMatch(runID, steps, baselineSteps, createdAt))
 ```
 
-- [ ] **Step 5: Add tests**
+- [x] **Step 5: Add tests**
 
 Add a test that creates candidate and baseline `world_knowledge_tier` steps with `RP_WORLD_KNOWLEDGE=5` and asserts the dimension passes.
 
 Add a test with baseline thinking metadata and candidate thinking metadata and asserts `thinking_present` and `thinking_volume_match` are not skipped.
 
-- [ ] **Step 6: Mark dimensions implemented**
+- [x] **Step 6: Mark dimensions implemented**
 
 In `internal/audit/methodology.go`, set:
 
@@ -601,7 +601,7 @@ active_weight: 129
 - Modify: `internal/audit/methodology.go`
 - Test: `internal/audit/diagnostic_runner_test.go`
 
-- [ ] **Step 1: Add cache reuse probe steps**
+- [x] **Step 1: Add cache reuse probe steps**
 
 Add two same-session steps:
 
@@ -618,7 +618,7 @@ Add two same-session steps:
 },
 ```
 
-- [ ] **Step 2: Add scorers**
+- [x] **Step 2: Add scorers**
 
 Add:
 
@@ -632,7 +632,7 @@ Rules:
 - `cache_hit_ratio_match`: if baseline and candidate both expose cache fields, compare cache read ratio. Within 20% = pass, within 50% = partial, otherwise fail. If baseline has no cache fields, skip.
 - `cache_continuity_intra`: candidate must return `RP_CACHE_MARKER=blue-17-river`; exact = pass, missing = fail. Baseline response stored in evidence.
 
-- [ ] **Step 3: Append scorers to `baselineAwareDimensions`**
+- [x] **Step 3: Append scorers to `baselineAwareDimensions`**
 
 Add:
 
@@ -641,7 +641,7 @@ Add:
 	out = append(out, scoreCacheContinuityIntra(runID, steps, baselineSteps, createdAt))
 ```
 
-- [ ] **Step 4: Mark dimensions implemented and active**
+- [x] **Step 4: Mark dimensions implemented and active**
 
 In `internal/audit/methodology.go`, set:
 
@@ -668,7 +668,7 @@ active_weight: 163
 - Modify: `internal/audit/methodology.go`
 - Test: `internal/audit/diagnostic_runner_test.go`
 
-- [ ] **Step 1: Add placeholder-safe scorers that skip honestly**
+- [x] **Step 1: Add placeholder-safe scorers that skip honestly**
 
 Add:
 
@@ -688,11 +688,11 @@ NormalizedScore: 0
 
 Do not include these in active scoring until scheduler support exists.
 
-- [ ] **Step 2: Append dimensions for evidence visibility**
+- [x] **Step 2: Append dimensions for evidence visibility**
 
 Append them to `baselineAwareDimensions`, but they will be skipped and excluded from effective score.
 
-- [ ] **Step 3: Mark implemented but inactive**
+- [x] **Step 3: Mark implemented but inactive**
 
 In `internal/audit/methodology.go`, set:
 
@@ -720,7 +720,7 @@ Note: implemented weight may exceed current total if the total changes later; if
 - Modify: `internal/audit/diagnostic_runner.go`
 - Modify: `internal/audit/methodology.go`
 
-- [ ] **Step 1: Add scorer**
+- [x] **Step 1: Add scorer**
 
 Add:
 
@@ -738,7 +738,7 @@ requires cross-tier baseline set
 
 - Do not attempt to infer tier from one candidate/baseline pair.
 
-- [ ] **Step 2: Mark implemented but inactive**
+- [x] **Step 2: Mark implemented but inactive**
 
 In `internal/audit/methodology.go`, set:
 
@@ -762,7 +762,7 @@ This dimension becomes active only after baseline storage supports cross-tier mo
 **Files:**
 - All above.
 
-- [ ] **Step 1: Run Go tests**
+- [x] **Step 1: Run Go tests**
 
 Run:
 
@@ -779,7 +779,7 @@ ok  	monitor/internal/config
 ok  	monitor/internal/storage
 ```
 
-- [ ] **Step 2: Restart local server and check methodology**
+- [x] **Step 2: Restart local server and check methodology**
 
 Run:
 
@@ -820,7 +820,7 @@ Expected:
 ]
 ```
 
-- [ ] **Step 3: Verify UI page**
+- [x] **Step 3: Verify UI page**
 
 Open:
 
@@ -843,7 +843,7 @@ Expected:
 - Modified Go source and tests.
 - This plan file.
 
-- [ ] **Step 1: Check status**
+- [x] **Step 1: Check status**
 
 Run:
 
@@ -853,7 +853,7 @@ git status --short
 
 Review unrelated dirty files before adding. Current branch already has other frontend/history-page work in progress; do not accidentally commit unrelated changes unless the user explicitly wants one combined commit.
 
-- [ ] **Step 2: Commit methodology work only**
+- [x] **Step 2: Commit methodology work only**
 
 Run:
 
