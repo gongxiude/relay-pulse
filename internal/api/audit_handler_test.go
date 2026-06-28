@@ -44,6 +44,8 @@ func newAuditTestRouter(t *testing.T, store *storage.SQLiteStorage, cfg *config.
 	r.POST("/api/audit/diagnostics", h.PostAuditDiagnosticSubmit)
 	r.GET("/api/audit/channels", h.GetAuditChannels)
 	r.GET("/api/audit/targets", h.GetAuditTargets)
+	r.PUT("/api/audit/targets/credential", h.PutAuditTargetCredential)
+	r.DELETE("/api/audit/targets/credential", h.DeleteAuditTargetCredential)
 	r.GET("/api/audit/ranking", h.GetAuditRanking)
 	r.GET("/api/audit/model-status", h.GetAuditModelStatus)
 	r.GET("/api/audit/methodology", h.GetAuditMethodology)
@@ -106,6 +108,71 @@ func ensureAuditTestDiagnosticConfig(cfg *config.AppConfig) {
 		if strings.TrimSpace(cfg.Audit.Diagnostics.TemplateBinding.Default[service]) == "" {
 			cfg.Audit.Diagnostics.TemplateBinding.Default[service] = "unit-diagnostic"
 		}
+	}
+}
+
+func TestAuditTargetCredentialAPIHidesPlaintextKey(t *testing.T) {
+	store := newAuditTestStore(t)
+	if err := store.ReplaceAuditTargets([]storage.AuditTarget{{
+		Provider:     "p1",
+		Service:      "cc",
+		Channel:      "101:demo",
+		Model:        "m1",
+		RequestModel: "m1",
+		Enabled:      true,
+	}}); err != nil {
+		t.Fatalf("ReplaceAuditTargets: %v", err)
+	}
+	router := newAuditTestRouter(t, store, &config.AppConfig{})
+	body := `{"provider":"p1","service":"cc","channel":"101:demo","api_key":"sk-secret-1234"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/audit/targets/credential", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("credential update unexpected: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "sk-secret-1234") {
+		t.Fatalf("response leaked plaintext key: %s", rec.Body.String())
+	}
+	if !containsJSON(rec.Body.String(), `"key_last4":"1234"`) {
+		t.Fatalf("response should expose key_last4 only: %s", rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/api/audit/targets/credential", strings.NewReader(`{"provider":"p1","service":"cc","channel":"101:demo"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("credential clear unexpected: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !containsJSON(rec.Body.String(), `"key_configured":false`) {
+		t.Fatalf("clear response should show key unconfigured: %s", rec.Body.String())
+	}
+}
+
+func TestAuditTargetsResponseDoesNotExposeAPIKey(t *testing.T) {
+	store := newAuditTestStore(t)
+	if err := store.ReplaceAuditTargets([]storage.AuditTarget{{
+		Provider:     "p1",
+		Service:      "cc",
+		Channel:      "101:demo",
+		Model:        "m1",
+		RequestModel: "m1",
+		Enabled:      true,
+		APIKey:       "sk-secret-1234",
+	}}); err != nil {
+		t.Fatalf("ReplaceAuditTargets: %v", err)
+	}
+	router := newAuditTestRouter(t, store, &config.AppConfig{})
+	req := httptest.NewRequest(http.MethodGet, "/api/audit/targets", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("targets unexpected: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "sk-secret-1234") {
+		t.Fatalf("targets leaked key: %s", rec.Body.String())
 	}
 }
 
@@ -633,6 +700,7 @@ func TestAuditModelStatusSeparatesSources(t *testing.T) {
 		Model:        "gpt-4o",
 		RequestModel: "gpt-4o",
 		Enabled:      true,
+		APIKey:       "sk-status-1234",
 	}
 	if err := store.ReplaceAuditTargets([]storage.AuditTarget{target}); err != nil {
 		t.Fatalf("ReplaceAuditTargets: %v", err)
@@ -708,6 +776,9 @@ func TestAuditModelStatusSeparatesSources(t *testing.T) {
 	if item.Production.Source != "production_logs" || item.Production.Status != "ok" || item.Production.Total != 1 {
 		t.Fatalf("unexpected production status: %+v", item.Production)
 	}
+	if !item.CredentialConfigured || item.CredentialLast4 != "1234" {
+		t.Fatalf("unexpected credential status: %+v", item)
+	}
 	if item.TemplateProbe.Source != "template_probe" || item.TemplateProbe.Status != "unavailable" || item.TemplateProbe.SubStatus != "auth_error" {
 		t.Fatalf("unexpected template probe status: %+v", item.TemplateProbe)
 	}
@@ -719,9 +790,23 @@ func TestAuditModelStatusSeparatesSources(t *testing.T) {
 	}
 }
 
-func TestAuditDiagnosticSubmit(t *testing.T) {
+func TestAuditDiagnosticSubmitUsesStoredChannelKey(t *testing.T) {
 	store := newAuditTestStore(t)
+	if err := store.ReplaceAuditTargets([]storage.AuditTarget{{
+		Provider:     "OpenAI",
+		Service:      "cc",
+		Channel:      "101:demo",
+		Model:        "gpt-4o",
+		RequestModel: "gpt-4o",
+		Enabled:      true,
+		APIKey:       "sk-channel-key",
+	}}); err != nil {
+		t.Fatalf("ReplaceAuditTargets: %v", err)
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "sk-channel-key" {
+			t.Fatalf("Authorization = %q, want channel key", got)
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"pong\"}}]}\n\n"))
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
@@ -734,7 +819,7 @@ func TestAuditDiagnosticSubmit(t *testing.T) {
 	cfg := &config.AppConfig{
 		NewAPI: config.NewAPIConfig{
 			BaseURL:     srv.URL,
-			AccessToken: "token",
+			AccessToken: "sync-token-must-not-be-used",
 			UserID:      "u1",
 		},
 	}
@@ -749,18 +834,23 @@ func TestAuditDiagnosticSubmit(t *testing.T) {
 	}
 }
 
-func TestAuditDiagnosticSubmitProbeOnlyRequiresProbeCredential(t *testing.T) {
+func TestAuditDiagnosticSubmitRejectsMissingChannelKey(t *testing.T) {
 	store := newAuditTestStore(t)
+	if err := store.ReplaceAuditTargets([]storage.AuditTarget{{
+		Provider:     "OpenAI",
+		Service:      "cc",
+		Channel:      "101:demo",
+		Model:        "gpt-4o",
+		RequestModel: "gpt-4o",
+		Enabled:      true,
+	}}); err != nil {
+		t.Fatalf("ReplaceAuditTargets: %v", err)
+	}
 	cfg := &config.AppConfig{
 		NewAPI: config.NewAPIConfig{
 			BaseURL:     "https://newapi.example.com",
 			AccessToken: "sync-token",
 			UserID:      "sync-user",
-		},
-		Audit: config.AuditConfig{
-			Diagnostics: config.DiagnosticsConfig{
-				CredentialMode: config.ProbeCredentialModeProbeOnly,
-			},
 		},
 	}
 	router := newAuditTestRouter(t, store, cfg)
@@ -769,8 +859,8 @@ func TestAuditDiagnosticSubmitProbeOnlyRequiresProbeCredential(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "probe_only") {
-		t.Fatalf("submit should fail with probe_only credential error: code=%d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "missing_credential") {
+		t.Fatalf("submit should fail missing credential: code=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -815,6 +905,7 @@ func TestAuditDiagnosticBackfill(t *testing.T) {
 			Weight:       10,
 			Priority:     5,
 			Enabled:      true,
+			APIKey:       "sk-backfill-channel-key",
 		},
 	}); err != nil {
 		t.Fatalf("ReplaceAuditTargets: %v", err)
@@ -832,6 +923,9 @@ func TestAuditDiagnosticBackfill(t *testing.T) {
 		t.Fatalf("SaveNewAPILogs: %v", err)
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "sk-backfill-channel-key" {
+			t.Fatalf("Authorization = %q, want channel key", got)
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"pong\"}}]}\n\n"))
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
@@ -843,7 +937,7 @@ func TestAuditDiagnosticBackfill(t *testing.T) {
 	router := newAuditTestRouter(t, store, &config.AppConfig{
 		NewAPI: config.NewAPIConfig{
 			BaseURL:     srv.URL,
-			AccessToken: "token",
+			AccessToken: "sync-token-must-not-be-used",
 			UserID:      "u1",
 		},
 	})
@@ -863,6 +957,46 @@ func TestAuditDiagnosticBackfill(t *testing.T) {
 	}
 	if !resp.Success || resp.Data.Selected != 1 || resp.Data.Started != 1 || len(resp.Data.Items) != 1 || resp.Data.Items[0].RunID == "" {
 		t.Fatalf("unexpected backfill payload: %+v", resp)
+	}
+}
+
+func TestAuditDiagnosticBackfillRejectsMissingChannelKey(t *testing.T) {
+	store := newAuditTestStore(t)
+	now := time.Now().Unix()
+	if err := store.ReplaceAuditTargets([]storage.AuditTarget{{
+		Provider:     "OpenAI",
+		Service:      "cc",
+		Channel:      "101:demo",
+		Model:        "gpt-4o",
+		RequestModel: "gpt-4o",
+		Enabled:      true,
+	}}); err != nil {
+		t.Fatalf("ReplaceAuditTargets: %v", err)
+	}
+	if err := store.SaveNewAPILogs([]storage.NewAPILog{{
+		ID:               1,
+		CreatedAt:        now,
+		Type:             2,
+		ModelName:        "gpt-4o",
+		ChannelID:        101,
+		PromptTokens:     10,
+		CompletionTokens: 20,
+	}}); err != nil {
+		t.Fatalf("SaveNewAPILogs: %v", err)
+	}
+	router := newAuditTestRouter(t, store, &config.AppConfig{
+		NewAPI: config.NewAPIConfig{
+			BaseURL:     "https://newapi.example.com",
+			AccessToken: "sync-token",
+			UserID:      "u1",
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/audit/diagnostics/backfill", strings.NewReader(`{"max_targets":1,"max_models_per_channel":1,"lookback_hours":24}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "missing_credential") {
+		t.Fatalf("backfill should mark missing credential: code=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

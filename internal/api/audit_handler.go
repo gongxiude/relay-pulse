@@ -55,6 +55,11 @@ type auditTemplateProbeStore interface {
 	SaveRecord(*storage.ProbeRecord) error
 }
 
+type auditCredentialStore interface {
+	SetAuditTargetCredential(provider, service, channel, apiKey string) (*storage.AuditTargetCredentialUpdate, error)
+	ClearAuditTargetCredential(provider, service, channel string) (*storage.AuditTargetCredentialUpdate, error)
+}
+
 type auditModelStatusStore interface {
 	auditReadStore
 	GetLatest(provider, service, channel, model string) (*storage.ProbeRecord, error)
@@ -63,6 +68,35 @@ type auditModelStatusStore interface {
 func (h *Handler) auditStore() (auditReadStore, bool) {
 	store, ok := h.storage.(auditReadStore)
 	return store, ok
+}
+
+func findAuditTarget(targets []storage.AuditTarget, provider, service, channel, model string) (*storage.AuditTarget, bool) {
+	provider = strings.TrimSpace(provider)
+	service = strings.TrimSpace(service)
+	channel = strings.TrimSpace(channel)
+	model = strings.TrimSpace(model)
+	for i := range targets {
+		target := &targets[i]
+		if target.Provider == provider && target.Service == service && target.Channel == channel && target.Model == model {
+			return target, true
+		}
+	}
+	return nil, false
+}
+
+func resolveStoredAuditTargetCredential(store auditReadStore, provider, service, channel, model string) (*storage.AuditTarget, error) {
+	targets, err := store.ListAuditTargets()
+	if err != nil {
+		return nil, err
+	}
+	target, ok := findAuditTarget(targets, provider, service, channel, model)
+	if !ok {
+		return nil, fmt.Errorf("audit target not found")
+	}
+	if strings.TrimSpace(target.APIKey) == "" {
+		return nil, fmt.Errorf("missing_credential")
+	}
+	return target, nil
 }
 
 func (h *Handler) newAPIClient() *newapi.Client {
@@ -183,17 +217,34 @@ func (h *Handler) PostAuditDiagnosticSubmit(c *gin.Context) {
 	if target.RequestModel == "" {
 		target.RequestModel = target.Model
 	}
-	h.cfgMu.RLock()
-	appCfg := h.config
-	creds, credErr := resolveAuditProbeCredentials(appCfg)
-	h.cfgMu.RUnlock()
-	if credErr != nil {
-		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, credErr.Error())
+	storedTarget, err := resolveStoredAuditTargetCredential(store, target.Provider, target.Service, target.Channel, target.Model)
+	if err != nil {
+		if err.Error() == "missing_credential" {
+			apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "missing_credential: 当前渠道未配置监测 key")
+			return
+		}
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, err.Error())
 		return
 	}
-	target.BaseURL = creds.BaseURL
-	target.AccessToken = creds.AccessToken
-	target.UserID = creds.UserID
+	h.cfgMu.RLock()
+	appCfg := h.config
+	h.cfgMu.RUnlock()
+	if appCfg == nil {
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "new-api 配置缺失，无法执行主动诊断")
+		return
+	}
+	if !appCfg.Audit.Diagnostics.IsEnabled() {
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "主动诊断已通过 audit.diagnostics.enabled 关闭")
+		return
+	}
+	target.BaseURL = strings.TrimSpace(appCfg.NewAPI.BaseURL)
+	if target.BaseURL == "" {
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "NEWAPI_BASE_URL 未配置，无法执行主动诊断")
+		return
+	}
+	target.AccessToken = strings.TrimSpace(storedTarget.APIKey)
+	target.UserID = strings.TrimSpace(appCfg.NewAPI.UserID)
+	target.CredentialSource = "audit_targets.api_key"
 	if err := attachAuditDiagnosticTemplate(appCfg, h.configDir(), &target); err != nil {
 		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, err.Error())
 		return
@@ -219,6 +270,58 @@ func (h *Handler) GetAuditTargets(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": targets})
+}
+
+func (h *Handler) PutAuditTargetCredential(c *gin.Context) {
+	store, ok := h.storage.(auditCredentialStore)
+	if !ok {
+		apiError(c, http.StatusNotImplemented, ErrCodeInternalError, "当前存储不支持渠道凭证")
+		return
+	}
+	var req auditTargetCredentialRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "请求参数错误")
+		return
+	}
+	result, err := store.SetAuditTargetCredential(req.Provider, req.Service, req.Channel, req.APIKey)
+	if err != nil {
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": auditTargetCredentialResponse{
+		Provider:      result.Provider,
+		Service:       result.Service,
+		Channel:       result.Channel,
+		Updated:       result.Updated,
+		KeyConfigured: result.KeyConfigured,
+		KeyLast4:      result.KeyLast4,
+	}})
+}
+
+func (h *Handler) DeleteAuditTargetCredential(c *gin.Context) {
+	store, ok := h.storage.(auditCredentialStore)
+	if !ok {
+		apiError(c, http.StatusNotImplemented, ErrCodeInternalError, "当前存储不支持渠道凭证")
+		return
+	}
+	var req auditTargetCredentialRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "请求参数错误")
+		return
+	}
+	result, err := store.ClearAuditTargetCredential(req.Provider, req.Service, req.Channel)
+	if err != nil {
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": auditTargetCredentialResponse{
+		Provider:      result.Provider,
+		Service:       result.Service,
+		Channel:       result.Channel,
+		Updated:       result.Updated,
+		KeyConfigured: result.KeyConfigured,
+		KeyLast4:      result.KeyLast4,
+	}})
 }
 
 func (h *Handler) GetAuditChannels(c *gin.Context) {
@@ -864,6 +967,9 @@ func (h *Handler) PostAuditDiagnosticBackfill(c *gin.Context) {
 	items := make([]auditDiagnosticBackfillItemResponse, 0, len(selected))
 	started := 0
 	failed := 0
+	h.cfgMu.RLock()
+	appCfg := h.config
+	h.cfgMu.RUnlock()
 	for _, target := range selected {
 		runTarget := audit.DiagnosticTarget{
 			Provider:     strings.TrimSpace(target.Provider),
@@ -875,17 +981,35 @@ func (h *Handler) PostAuditDiagnosticBackfill(c *gin.Context) {
 		if runTarget.RequestModel == "" {
 			runTarget.RequestModel = runTarget.Model
 		}
-		h.cfgMu.RLock()
-		appCfg := h.config
-		creds, credErr := resolveAuditProbeCredentials(appCfg)
-		h.cfgMu.RUnlock()
-		if credErr != nil {
-			apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, credErr.Error())
+		if strings.TrimSpace(target.APIKey) == "" {
+			item := auditDiagnosticBackfillItemResponse{
+				Provider: runTarget.Provider,
+				Service:  runTarget.Service,
+				Channel:  runTarget.Channel,
+				Model:    runTarget.Model,
+				Status:   "failed",
+				Error:    "missing_credential: 当前渠道未配置监测 key",
+			}
+			failed++
+			items = append(items, item)
+			continue
+		}
+		if appCfg == nil {
+			apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "new-api 配置缺失，无法执行主动诊断")
 			return
 		}
-		runTarget.BaseURL = creds.BaseURL
-		runTarget.AccessToken = creds.AccessToken
-		runTarget.UserID = creds.UserID
+		if !appCfg.Audit.Diagnostics.IsEnabled() {
+			apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "主动诊断已通过 audit.diagnostics.enabled 关闭")
+			return
+		}
+		runTarget.BaseURL = strings.TrimSpace(appCfg.NewAPI.BaseURL)
+		if runTarget.BaseURL == "" {
+			apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "NEWAPI_BASE_URL 未配置，无法执行主动诊断")
+			return
+		}
+		runTarget.AccessToken = strings.TrimSpace(target.APIKey)
+		runTarget.UserID = strings.TrimSpace(appCfg.NewAPI.UserID)
+		runTarget.CredentialSource = "audit_targets.api_key"
 		if err := attachAuditDiagnosticTemplate(appCfg, h.configDir(), &runTarget); err != nil {
 			item := auditDiagnosticBackfillItemResponse{
 				Provider: runTarget.Provider,
@@ -958,10 +1082,18 @@ func (h *Handler) PostAuditTemplateProbeBackfill(c *gin.Context) {
 	}
 	h.cfgMu.RLock()
 	appCfg := h.config
-	creds, credErr := resolveAuditProbeCredentials(h.config)
 	h.cfgMu.RUnlock()
-	if credErr != nil {
-		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, credErr.Error())
+	if appCfg == nil {
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "new-api 配置缺失，无法执行主动诊断")
+		return
+	}
+	if !appCfg.Audit.Diagnostics.IsEnabled() {
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "主动诊断已通过 audit.diagnostics.enabled 关闭")
+		return
+	}
+	baseURL := strings.TrimSpace(appCfg.NewAPI.BaseURL)
+	if baseURL == "" {
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "NEWAPI_BASE_URL 未配置，无法执行主动诊断")
 		return
 	}
 	targets, err := store.ListAuditTargets()
@@ -989,10 +1121,17 @@ func (h *Handler) PostAuditTemplateProbeBackfill(c *gin.Context) {
 			continue
 		}
 		item.Template = templateName
+		if strings.TrimSpace(target.APIKey) == "" {
+			item.Status = "failed"
+			item.Error = "missing_credential: 当前渠道未配置监测 key"
+			failed++
+			items = append(items, item)
+			continue
+		}
 		probeCfg, err := audit.BuildTemplateProbeConfig(appCfg, target, audit.TemplateProbeCredentials{
-			BaseURL:     creds.BaseURL,
-			AccessToken: creds.AccessToken,
-			UserID:      creds.UserID,
+			BaseURL:     baseURL,
+			AccessToken: strings.TrimSpace(target.APIKey),
+			UserID:      strings.TrimSpace(appCfg.NewAPI.UserID),
 		}, templateName, configDir)
 		if err != nil {
 			item.Status = "failed"
@@ -1393,6 +1532,17 @@ func windowDuration(window string) time.Duration {
 	}
 }
 
+func last4ForAPIResponse(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if len(value) <= 4 {
+		return value
+	}
+	return value[len(value)-4:]
+}
+
 func buildAuditRankingRows(targets []storage.AuditTarget, logs []storage.NewAPILog, window string, now time.Time) []auditRankingRow {
 	logMap := make(map[string][]audit.LogSpec)
 	for _, log := range logs {
@@ -1510,15 +1660,17 @@ func buildAuditModelStatusItems(store auditModelStatusStore, targets []storage.A
 			return nil, err
 		}
 		items = append(items, auditModelStatusItemResponse{
-			Provider:      target.Provider,
-			Service:       target.Service,
-			Channel:       target.Channel,
-			Model:         target.Model,
-			RequestModel:  target.RequestModel,
-			Enabled:       target.Enabled,
-			Production:    production,
-			TemplateProbe: templateProbe,
-			QuickProbe:    quickProbe,
+			Provider:             target.Provider,
+			Service:              target.Service,
+			Channel:              target.Channel,
+			Model:                target.Model,
+			RequestModel:         target.RequestModel,
+			Enabled:              target.Enabled,
+			CredentialConfigured: strings.TrimSpace(target.APIKey) != "",
+			CredentialLast4:      last4ForAPIResponse(target.APIKey),
+			Production:           production,
+			TemplateProbe:        templateProbe,
+			QuickProbe:           quickProbe,
 		})
 	}
 	return items, nil

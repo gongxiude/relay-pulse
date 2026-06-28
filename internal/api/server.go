@@ -170,6 +170,8 @@ func NewServer(store storage.Storage, cfg *config.AppConfig, port string, autoMo
 	router.POST("/api/audit/newapi/sync/logs", handler.PostAuditSyncLogs)
 	router.GET("/api/audit/channels", handler.GetAuditChannels)
 	router.GET("/api/audit/targets", handler.GetAuditTargets)
+	router.PUT("/api/audit/targets/credential", handler.PutAuditTargetCredential)
+	router.DELETE("/api/audit/targets/credential", handler.DeleteAuditTargetCredential)
 	router.GET("/api/audit/ranking", handler.GetAuditRanking)
 	router.GET("/api/audit/model-status", handler.GetAuditModelStatus)
 	router.GET("/api/audit/methodology", handler.GetAuditMethodology)

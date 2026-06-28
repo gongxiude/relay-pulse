@@ -200,6 +200,22 @@ type auditDiagnosticSubmitResponse struct {
 	RunID string `json:"run_id"`
 }
 
+type auditTargetCredentialRequest struct {
+	Provider string `json:"provider"`
+	Service  string `json:"service"`
+	Channel  string `json:"channel"`
+	APIKey   string `json:"api_key"`
+}
+
+type auditTargetCredentialResponse struct {
+	Provider      string `json:"provider"`
+	Service       string `json:"service"`
+	Channel       string `json:"channel"`
+	Updated       int    `json:"updated"`
+	KeyConfigured bool   `json:"key_configured"`
+	KeyLast4      string `json:"key_last4"`
+}
+
 type auditDiagnosticBackfillRequest struct {
 	MaxTargets          int `json:"max_targets"`
 	MaxModelsPerChannel int `json:"max_models_per_channel"`
@@ -260,15 +276,17 @@ type auditModelStatusMetaResponse struct {
 }
 
 type auditModelStatusItemResponse struct {
-	Provider      string                           `json:"provider"`
-	Service       string                           `json:"service"`
-	Channel       string                           `json:"channel"`
-	Model         string                           `json:"model"`
-	RequestModel  string                           `json:"request_model"`
-	Enabled       bool                             `json:"enabled"`
-	Production    auditProductionStatusResponse    `json:"production"`
-	TemplateProbe auditTemplateProbeStatusResponse `json:"template_probe"`
-	QuickProbe    auditQuickProbeStatusResponse    `json:"quick_probe"`
+	Provider             string                           `json:"provider"`
+	Service              string                           `json:"service"`
+	Channel              string                           `json:"channel"`
+	Model                string                           `json:"model"`
+	RequestModel         string                           `json:"request_model"`
+	Enabled              bool                             `json:"enabled"`
+	CredentialConfigured bool                             `json:"credential_configured"`
+	CredentialLast4      string                           `json:"credential_last4,omitempty"`
+	Production           auditProductionStatusResponse    `json:"production"`
+	TemplateProbe        auditTemplateProbeStatusResponse `json:"template_probe"`
+	QuickProbe           auditQuickProbeStatusResponse    `json:"quick_probe"`
 }
 
 type auditProductionStatusResponse struct {

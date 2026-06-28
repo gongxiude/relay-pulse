@@ -80,7 +80,15 @@ new-api HTTP API
 
 当前同步 channel 不包含 per-channel probe key / api key 字段。第一版不能假定每个 channel 都能自动同步独立探针凭证。
 
-`NEWAPI_PROBE_ACCESS_TOKEN` 只解决“RelayPulse 是否有权限通过 `new-api` relay 发起探测请求”的问题，不决定请求路径、HTTP method、headers 或 body 结构。主动诊断的请求路径和请求体必须由诊断模板提供，不能因为配置了 probe token 就绕过模板直接硬编码调用 `/v1/chat/completions`。
+`NEWAPI_ACCESS_TOKEN` 只用于读取 `new-api` 渠道和日志；它不是渠道真实性检测凭证。`NEWAPI_PROBE_ACCESS_TOKEN` 可作为兼容配置保留，但从 `new-api` 同步渠道生成的正式检测目标不得 fallback 到全局 token。
+
+### 渠道级监测凭证
+
+从 `new-api` 同步过来的渠道元数据不包含每个渠道的真实监测 key。RelayPulse 在本地 `audit_targets` 中保存渠道级 `api_key`，按 `provider + service + channel` 维护，并复制到该渠道下的所有模型目标。
+
+主动检测、模板补洞和 `quick-probe-v1` 必须使用 `audit_targets.api_key`。如果目标渠道未配置 key，检测结果必须标记为 `missing_credential`，不得 fallback 到 `NEWAPI_ACCESS_TOKEN`。
+
+`NEWAPI_ACCESS_TOKEN` 只用于读取 `new-api` 渠道和日志；它不是渠道真实性检测凭证。
 
 必须同步的渠道字段：
 
@@ -219,15 +227,15 @@ audit:
 
 `model_family` 和 `channel_type` 作为配置结构保留，后续用于更细粒度覆盖；未实现覆盖优先级前，不得假定它们已经影响实际探测模板选择。
 
-凭证模式：
+渠道级凭证规则：
 
-| `credential_mode` | 含义 |
+| 项 | 要求 |
 |---|---|
-| `probe_only` | 只允许使用独立 probe 凭证，没有则任务失败 |
-| `probe_fallback` | 优先 probe 凭证，缺失时回退到 `NEWAPI_ACCESS_TOKEN` |
-| `newapi_only` | 只使用 `NEWAPI_ACCESS_TOKEN` / `NEWAPI_USER_ID` |
-
-默认使用 `probe_fallback`。
+| 凭证来源 | `audit_targets.api_key` |
+| 配置粒度 | `provider + service + channel` |
+| 模型复制 | 同一渠道下所有模型共享该渠道 key |
+| 缺失处理 | 返回 `missing_credential` |
+| 禁止行为 | 不得 fallback 到 `NEWAPI_ACCESS_TOKEN` 做真实性检测 |
 
 ## 8. quick-probe-v1 流程与模板复用
 
