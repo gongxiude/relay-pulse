@@ -70,6 +70,7 @@ notifier/config.local.yaml
 notifier/notifier
 
 # Tools
+.worktrees/
 .playwright-mcp/
 .playwright-cli/
 config.yaml.backup-*
