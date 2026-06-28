@@ -761,9 +761,23 @@ func TestAuditModelStatusSeparatesSources(t *testing.T) {
 	}
 }
 
-func TestAuditDiagnosticSubmit(t *testing.T) {
+func TestAuditDiagnosticSubmitUsesStoredChannelKey(t *testing.T) {
 	store := newAuditTestStore(t)
+	if err := store.ReplaceAuditTargets([]storage.AuditTarget{{
+		Provider:     "OpenAI",
+		Service:      "cc",
+		Channel:      "101:demo",
+		Model:        "gpt-4o",
+		RequestModel: "gpt-4o",
+		Enabled:      true,
+		APIKey:       "sk-channel-key",
+	}}); err != nil {
+		t.Fatalf("ReplaceAuditTargets: %v", err)
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "sk-channel-key" {
+			t.Fatalf("Authorization = %q, want channel key", got)
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"pong\"}}]}\n\n"))
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
@@ -776,7 +790,7 @@ func TestAuditDiagnosticSubmit(t *testing.T) {
 	cfg := &config.AppConfig{
 		NewAPI: config.NewAPIConfig{
 			BaseURL:     srv.URL,
-			AccessToken: "token",
+			AccessToken: "sync-token-must-not-be-used",
 			UserID:      "u1",
 		},
 	}
@@ -791,18 +805,23 @@ func TestAuditDiagnosticSubmit(t *testing.T) {
 	}
 }
 
-func TestAuditDiagnosticSubmitProbeOnlyRequiresProbeCredential(t *testing.T) {
+func TestAuditDiagnosticSubmitRejectsMissingChannelKey(t *testing.T) {
 	store := newAuditTestStore(t)
+	if err := store.ReplaceAuditTargets([]storage.AuditTarget{{
+		Provider:     "OpenAI",
+		Service:      "cc",
+		Channel:      "101:demo",
+		Model:        "gpt-4o",
+		RequestModel: "gpt-4o",
+		Enabled:      true,
+	}}); err != nil {
+		t.Fatalf("ReplaceAuditTargets: %v", err)
+	}
 	cfg := &config.AppConfig{
 		NewAPI: config.NewAPIConfig{
 			BaseURL:     "https://newapi.example.com",
 			AccessToken: "sync-token",
 			UserID:      "sync-user",
-		},
-		Audit: config.AuditConfig{
-			Diagnostics: config.DiagnosticsConfig{
-				CredentialMode: config.ProbeCredentialModeProbeOnly,
-			},
 		},
 	}
 	router := newAuditTestRouter(t, store, cfg)
@@ -811,8 +830,8 @@ func TestAuditDiagnosticSubmitProbeOnlyRequiresProbeCredential(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "probe_only") {
-		t.Fatalf("submit should fail with probe_only credential error: code=%d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "missing_credential") {
+		t.Fatalf("submit should fail missing credential: code=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

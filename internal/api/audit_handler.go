@@ -70,6 +70,35 @@ func (h *Handler) auditStore() (auditReadStore, bool) {
 	return store, ok
 }
 
+func findAuditTarget(targets []storage.AuditTarget, provider, service, channel, model string) (*storage.AuditTarget, bool) {
+	provider = strings.TrimSpace(provider)
+	service = strings.TrimSpace(service)
+	channel = strings.TrimSpace(channel)
+	model = strings.TrimSpace(model)
+	for i := range targets {
+		target := &targets[i]
+		if target.Provider == provider && target.Service == service && target.Channel == channel && target.Model == model {
+			return target, true
+		}
+	}
+	return nil, false
+}
+
+func resolveStoredAuditTargetCredential(store auditReadStore, provider, service, channel, model string) (*storage.AuditTarget, error) {
+	targets, err := store.ListAuditTargets()
+	if err != nil {
+		return nil, err
+	}
+	target, ok := findAuditTarget(targets, provider, service, channel, model)
+	if !ok {
+		return nil, fmt.Errorf("audit target not found")
+	}
+	if strings.TrimSpace(target.APIKey) == "" {
+		return nil, fmt.Errorf("missing_credential")
+	}
+	return target, nil
+}
+
 func (h *Handler) newAPIClient() *newapi.Client {
 	h.cfgMu.RLock()
 	cfg := h.config
@@ -188,17 +217,34 @@ func (h *Handler) PostAuditDiagnosticSubmit(c *gin.Context) {
 	if target.RequestModel == "" {
 		target.RequestModel = target.Model
 	}
-	h.cfgMu.RLock()
-	appCfg := h.config
-	creds, credErr := resolveAuditProbeCredentials(appCfg)
-	h.cfgMu.RUnlock()
-	if credErr != nil {
-		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, credErr.Error())
+	storedTarget, err := resolveStoredAuditTargetCredential(store, target.Provider, target.Service, target.Channel, target.Model)
+	if err != nil {
+		if err.Error() == "missing_credential" {
+			apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "missing_credential: 当前渠道未配置监测 key")
+			return
+		}
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, err.Error())
 		return
 	}
-	target.BaseURL = creds.BaseURL
-	target.AccessToken = creds.AccessToken
-	target.UserID = creds.UserID
+	h.cfgMu.RLock()
+	appCfg := h.config
+	h.cfgMu.RUnlock()
+	if appCfg == nil {
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "new-api 配置缺失，无法执行主动诊断")
+		return
+	}
+	if !appCfg.Audit.Diagnostics.IsEnabled() {
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "主动诊断已通过 audit.diagnostics.enabled 关闭")
+		return
+	}
+	target.BaseURL = strings.TrimSpace(appCfg.NewAPI.BaseURL)
+	if target.BaseURL == "" {
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "NEWAPI_BASE_URL 未配置，无法执行主动诊断")
+		return
+	}
+	target.AccessToken = strings.TrimSpace(storedTarget.APIKey)
+	target.UserID = strings.TrimSpace(appCfg.NewAPI.UserID)
+	target.CredentialSource = "audit_targets.api_key"
 	if err := attachAuditDiagnosticTemplate(appCfg, h.configDir(), &target); err != nil {
 		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, err.Error())
 		return

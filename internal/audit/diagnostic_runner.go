@@ -22,16 +22,17 @@ import (
 )
 
 type DiagnosticTarget struct {
-	Provider     string
-	Service      string
-	Channel      string
-	Model        string
-	RequestModel string
-	BaseURL      string
-	AccessToken  string
-	UserID       string
-	Template     *config.ProbeTemplate
-	TemplateName string
+	Provider         string
+	Service          string
+	Channel          string
+	Model            string
+	RequestModel     string
+	BaseURL          string
+	AccessToken      string
+	UserID           string
+	CredentialSource string
+	Template         *config.ProbeTemplate
+	TemplateName     string
 }
 
 type DiagnosticRunner struct {
@@ -109,15 +110,16 @@ func (r *DiagnosticRunner) Run(ctx context.Context, target DiagnosticTarget, sto
 		CreatedAt: now.Unix(),
 		UpdatedAt: now.Unix(),
 		Input: mustJSON(map[string]any{
-			"provider":      target.Provider,
-			"service":       target.Service,
-			"channel":       target.Channel,
-			"model":         target.Model,
-			"request_model": target.RequestModel,
-			"base_url":      target.BaseURL,
-			"template_name": target.TemplateName,
-			"group_id":      groupID,
-			"steps":         stepNames(quickProbeSteps),
+			"provider":          target.Provider,
+			"service":           target.Service,
+			"channel":           target.Channel,
+			"model":             target.Model,
+			"request_model":     target.RequestModel,
+			"base_url":          target.BaseURL,
+			"template_name":     target.TemplateName,
+			"credential_source": target.CredentialSource,
+			"group_id":          groupID,
+			"steps":             stepNames(quickProbeSteps),
 		}),
 	}
 	if err := store.SaveDiagnosticRun(run); err != nil {
