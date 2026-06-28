@@ -44,6 +44,8 @@ func newAuditTestRouter(t *testing.T, store *storage.SQLiteStorage, cfg *config.
 	r.POST("/api/audit/diagnostics", h.PostAuditDiagnosticSubmit)
 	r.GET("/api/audit/channels", h.GetAuditChannels)
 	r.GET("/api/audit/targets", h.GetAuditTargets)
+	r.PUT("/api/audit/targets/credential", h.PutAuditTargetCredential)
+	r.DELETE("/api/audit/targets/credential", h.DeleteAuditTargetCredential)
 	r.GET("/api/audit/ranking", h.GetAuditRanking)
 	r.GET("/api/audit/model-status", h.GetAuditModelStatus)
 	r.GET("/api/audit/methodology", h.GetAuditMethodology)
@@ -106,6 +108,46 @@ func ensureAuditTestDiagnosticConfig(cfg *config.AppConfig) {
 		if strings.TrimSpace(cfg.Audit.Diagnostics.TemplateBinding.Default[service]) == "" {
 			cfg.Audit.Diagnostics.TemplateBinding.Default[service] = "unit-diagnostic"
 		}
+	}
+}
+
+func TestAuditTargetCredentialAPIHidesPlaintextKey(t *testing.T) {
+	store := newAuditTestStore(t)
+	if err := store.ReplaceAuditTargets([]storage.AuditTarget{{
+		Provider:     "p1",
+		Service:      "cc",
+		Channel:      "101:demo",
+		Model:        "m1",
+		RequestModel: "m1",
+		Enabled:      true,
+	}}); err != nil {
+		t.Fatalf("ReplaceAuditTargets: %v", err)
+	}
+	router := newAuditTestRouter(t, store, &config.AppConfig{})
+	body := `{"provider":"p1","service":"cc","channel":"101:demo","api_key":"sk-secret-1234"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/audit/targets/credential", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("credential update unexpected: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "sk-secret-1234") {
+		t.Fatalf("response leaked plaintext key: %s", rec.Body.String())
+	}
+	if !containsJSON(rec.Body.String(), `"key_last4":"1234"`) {
+		t.Fatalf("response should expose key_last4 only: %s", rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/api/audit/targets/credential", strings.NewReader(`{"provider":"p1","service":"cc","channel":"101:demo"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("credential clear unexpected: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !containsJSON(rec.Body.String(), `"key_configured":false`) {
+		t.Fatalf("clear response should show key unconfigured: %s", rec.Body.String())
 	}
 }
 

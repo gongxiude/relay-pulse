@@ -200,6 +200,22 @@ type auditDiagnosticSubmitResponse struct {
 	RunID string `json:"run_id"`
 }
 
+type auditTargetCredentialRequest struct {
+	Provider string `json:"provider"`
+	Service  string `json:"service"`
+	Channel  string `json:"channel"`
+	APIKey   string `json:"api_key"`
+}
+
+type auditTargetCredentialResponse struct {
+	Provider      string `json:"provider"`
+	Service       string `json:"service"`
+	Channel       string `json:"channel"`
+	Updated       int    `json:"updated"`
+	KeyConfigured bool   `json:"key_configured"`
+	KeyLast4      string `json:"key_last4"`
+}
+
 type auditDiagnosticBackfillRequest struct {
 	MaxTargets          int `json:"max_targets"`
 	MaxModelsPerChannel int `json:"max_models_per_channel"`

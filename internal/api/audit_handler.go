@@ -55,6 +55,11 @@ type auditTemplateProbeStore interface {
 	SaveRecord(*storage.ProbeRecord) error
 }
 
+type auditCredentialStore interface {
+	SetAuditTargetCredential(provider, service, channel, apiKey string) (*storage.AuditTargetCredentialUpdate, error)
+	ClearAuditTargetCredential(provider, service, channel string) (*storage.AuditTargetCredentialUpdate, error)
+}
+
 type auditModelStatusStore interface {
 	auditReadStore
 	GetLatest(provider, service, channel, model string) (*storage.ProbeRecord, error)
@@ -219,6 +224,58 @@ func (h *Handler) GetAuditTargets(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": targets})
+}
+
+func (h *Handler) PutAuditTargetCredential(c *gin.Context) {
+	store, ok := h.storage.(auditCredentialStore)
+	if !ok {
+		apiError(c, http.StatusNotImplemented, ErrCodeInternalError, "当前存储不支持渠道凭证")
+		return
+	}
+	var req auditTargetCredentialRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "请求参数错误")
+		return
+	}
+	result, err := store.SetAuditTargetCredential(req.Provider, req.Service, req.Channel, req.APIKey)
+	if err != nil {
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": auditTargetCredentialResponse{
+		Provider:      result.Provider,
+		Service:       result.Service,
+		Channel:       result.Channel,
+		Updated:       result.Updated,
+		KeyConfigured: result.KeyConfigured,
+		KeyLast4:      result.KeyLast4,
+	}})
+}
+
+func (h *Handler) DeleteAuditTargetCredential(c *gin.Context) {
+	store, ok := h.storage.(auditCredentialStore)
+	if !ok {
+		apiError(c, http.StatusNotImplemented, ErrCodeInternalError, "当前存储不支持渠道凭证")
+		return
+	}
+	var req auditTargetCredentialRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, "请求参数错误")
+		return
+	}
+	result, err := store.ClearAuditTargetCredential(req.Provider, req.Service, req.Channel)
+	if err != nil {
+		apiError(c, http.StatusBadRequest, ErrCodeInvalidParam, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": auditTargetCredentialResponse{
+		Provider:      result.Provider,
+		Service:       result.Service,
+		Channel:       result.Channel,
+		Updated:       result.Updated,
+		KeyConfigured: result.KeyConfigured,
+		KeyLast4:      result.KeyLast4,
+	}})
 }
 
 func (h *Handler) GetAuditChannels(c *gin.Context) {
