@@ -879,6 +879,55 @@ func TestAuditDiagnosticSubmitUsesStoredChannelKey(t *testing.T) {
 	}
 }
 
+func TestAuditDiagnosticSubmitUsesStoredBaseURLNotGlobalNewAPIBaseURL(t *testing.T) {
+	store := newAuditTestStore(t)
+	channelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "sk-channel-key" {
+			t.Fatalf("Authorization = %q, want channel key", got)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"pong\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer channelServer.Close()
+
+	globalServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "global base url must not be used", http.StatusUnauthorized)
+	}))
+	defer globalServer.Close()
+
+	if err := store.ReplaceAuditTargets([]storage.AuditTarget{{
+		Provider:     "alan-官key直连",
+		Service:      "anthropic",
+		Channel:      "80:alan-官key直连",
+		Model:        "claude-opus-4-8",
+		RequestModel: "claude-opus-4-8",
+		Enabled:      true,
+		BaseURL:      channelServer.URL,
+		APIKey:       "sk-channel-key",
+		Source:       "newapi_sync",
+	}}); err != nil {
+		t.Fatalf("ReplaceAuditTargets: %v", err)
+	}
+
+	cfg := &config.AppConfig{
+		NewAPI: config.NewAPIConfig{
+			BaseURL:     globalServer.URL,
+			AccessToken: "sync-token",
+			UserID:      "1",
+		},
+	}
+	router := newAuditTestRouter(t, store, cfg)
+	body := `{"provider":"alan-官key直连","service":"anthropic","channel":"80:alan-官key直连","model":"claude-opus-4-8","request_model":"claude-opus-4-8"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/audit/diagnostics", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("submit unexpected: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestAuditDiagnosticSubmitRejectsMissingChannelKey(t *testing.T) {
 	store := newAuditTestStore(t)
 	if err := store.ReplaceAuditTargets([]storage.AuditTarget{{
@@ -906,6 +955,38 @@ func TestAuditDiagnosticSubmitRejectsMissingChannelKey(t *testing.T) {
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "missing_credential") {
 		t.Fatalf("submit should fail missing credential: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAuditDiagnosticSubmitRejectsMissingBaseURL(t *testing.T) {
+	store := newAuditTestStore(t)
+	if err := store.ReplaceAuditTargets([]storage.AuditTarget{{
+		Provider:     "alan-官key直连",
+		Service:      "anthropic",
+		Channel:      "80:alan-官key直连",
+		Model:        "claude-opus-4-8",
+		RequestModel: "claude-opus-4-8",
+		Enabled:      true,
+		APIKey:       "sk-channel-key",
+		Source:       "newapi_sync",
+	}}); err != nil {
+		t.Fatalf("ReplaceAuditTargets: %v", err)
+	}
+	cfg := &config.AppConfig{
+		NewAPI: config.NewAPIConfig{
+			BaseURL:     "http://global.example.invalid",
+			AccessToken: "sync-token",
+			UserID:      "1",
+		},
+	}
+	router := newAuditTestRouter(t, store, cfg)
+	body := `{"provider":"alan-官key直连","service":"anthropic","channel":"80:alan-官key直连","model":"claude-opus-4-8","request_model":"claude-opus-4-8"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/audit/diagnostics", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "missing_base_url") {
+		t.Fatalf("submit should fail missing_base_url: code=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
